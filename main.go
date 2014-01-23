@@ -43,7 +43,7 @@ type Promise struct {
 }
 
 func (this *AcceptorRole) Prepare(req *PromiseReq, reply *Promise) error {
-    fmt.Println(this.Role.roleId, "considering promise", req.ProposalId, this.minProposalId)
+    fmt.Println("Acceptor", this.Role.roleId, "considering promise", req.ProposalId, "vs", this.minProposalId)
     reply.PromiseAccepted = req.ProposalId > this.minProposalId
     reply.AcceptedProposalId = this.acceptedProposalId
     reply.AcceptedValue = this.acceptedValue
@@ -57,9 +57,8 @@ type Proposal struct {
 }
 
 func (this *AcceptorRole) Accept(proposal *Proposal, reply *uint64) error {
-    fmt.Println(this.Role.roleId, "considering proposal", proposal.ProposalId, ":", proposal.Value)
+    fmt.Println("Acceptor", this.Role.roleId, "considering proposal", proposal.ProposalId)
     if proposal.ProposalId >= this.minProposalId {
-        fmt.Println("Accepted proposal", proposal.ProposalId)
         this.acceptedProposalId = proposal.ProposalId
         this.acceptedValue = proposal.Value
     }
@@ -67,19 +66,11 @@ func (this *AcceptorRole) Accept(proposal *Proposal, reply *uint64) error {
     return nil
 }
 
-func (this *AcceptorRole) run() {
-    fmt.Println("Registering acceptor", this.Role.roleId, "at", this.Role.peers[this.Role.roleId])
-    rpc.Register(this)
-    ln, err := net.Listen("tcp", this.Role.peers[this.Role.roleId])
-    if err != nil {
-        fmt.Println("Listening error:", err)
-        return
-    }
+func (this *AcceptorRole) run(handler *rpc.Server, ln net.Listener) {
     for {
         cxn, err := ln.Accept()
-        fmt.Println("Accepting connection", this.Role.roleId, cxn)
         if err != nil { continue }
-        go rpc.ServeConn(cxn)
+        go handler.ServeConn(cxn)
     }
 }
 
@@ -98,7 +89,6 @@ func (this *ProposerRole) connect() (map[uint64]*rpc.Client, error) {
     for key, val := range this.Role.peers {
         cxn, err := rpc.Dial("tcp", val)
         if err != nil { return acceptors, err }
-        fmt.Println("Connected to acceptor", key, "at", val, cxn)
         acceptors[key] = cxn
     }
     return acceptors, nil
@@ -114,7 +104,6 @@ func (this *ProposerRole) preparePhase(acceptors map[uint64]*rpc.Client) (bool, 
     req := &PromiseReq{this.proposalId}
     for _, acceptor := range acceptors {
         var promiseReply Promise
-        fmt.Println("Sending prepare request to", acceptor)
         acceptor.Go("AcceptorRole.Prepare", req, &promiseReply, endpoint)
     }
     
@@ -123,13 +112,14 @@ func (this *ProposerRole) preparePhase(acceptors map[uint64]*rpc.Client) (bool, 
     promiseCount := 0
     var highestAccepted uint64 = 0
     for promiseCount < majority && replyCount < peerCount {
-        var promise *Promise
+        var promise Promise
         select {
             case reply := <- endpoint: 
                 if reply.Error != nil { return false, reply.Error }
-                promise = reply.Reply.(*Promise)
+                promise = *reply.Reply.(*Promise)
                 replyCount++
             case <- time.After(1000000000):
+                fmt.Println("Prepare phase time-out: proposal", this.proposalId)
                 return false, nil
         }
 
@@ -142,13 +132,14 @@ func (this *ProposerRole) preparePhase(acceptors map[uint64]*rpc.Client) (bool, 
         }
     }
 
-    fmt.Println("Promisecount", promiseCount, peerCount, majority, replyCount)
+    fmt.Println("Processed", replyCount, "replies with", promiseCount, "promises.")
     return promiseCount >= majority, nil
 }
 
 // Proposal phase
 func (this *ProposerRole) proposalPhase(acceptors map[uint64]*rpc.Client) (bool, error) {
     peerCount := len(this.Role.peers)
+    majority := peerCount / 2 + 1
     endpoint := make(chan *rpc.Call, peerCount)
 
     // Sends out proposals
@@ -160,20 +151,25 @@ func (this *ProposerRole) proposalPhase(acceptors map[uint64]*rpc.Client) (bool,
 
     // Waits for acceptance from majority of acceptors
     acceptCount := 0
-    for acceptCount < (peerCount / 2 + 1) {
-        reply := <- endpoint 
-        if reply.Error != nil {
-            return false, reply.Error
+    for acceptCount < majority {
+        var acceptedId uint64
+        select {
+            case reply := <- endpoint :
+                if reply.Error != nil { return false, reply.Error }
+                acceptedId = *reply.Reply.(*uint64)
+            case <- time.After(1000000000):
+                fmt.Println("Accept phase time-out: proposal", this.proposalId)
+                return false, nil
         }
-        acceptedId := reply.Reply.(*uint64)
 
-        if *acceptedId <= this.proposalId {
+        if acceptedId <= this.proposalId {
             acceptCount++
         } else {
             return false, nil
         }
     }
 
+    fmt.Println("Majority accepted proposal", this.proposalId, "with value", this.value)
     return true, nil
 }
 
@@ -195,21 +191,23 @@ func (this *ProposerRole) run() {
     }
 
     for notChosen {
-        // Generates new proposal ID
         this.proposalId += this.Role.roleId
 
+        // Executes prepare phase
         success, err := this.preparePhase(acceptors)
         if err != nil {
             fmt.Println("Prepare phase error:", err)
             return
         }
 
+        // Executes proposal phase
         if success {
-            notChosen, err = this.proposalPhase(acceptors)
+            success, err = this.proposalPhase(acceptors)
             if err != nil {
                 fmt.Println("Proposal phase error:", err)
                 return
             }
+            notChosen = !success
         }
     }
 }
@@ -218,17 +216,31 @@ func main() {
     client := make(chan string)
     peers := map[uint64]string {
         1: "127.0.0.1:10000",
-        2: "127.0.0.1:10010",
+        2: "127.0.0.1:10001",
+        3: "127.0.0.1:10002",
+        4: "127.0.0.1:10003",
+        5: "127.0.0.1:10004",
     }
 
     role := Role{0, client, peers}
-    for roleId := range peers {
+    for roleId, address := range peers {
         role.roleId = roleId
-        acceptor := AcceptorRole{role, 2, 0, ""}
-        go acceptor.run()
+        acceptor := AcceptorRole{role, 5, 0, "foobar"}
+        handler := rpc.NewServer()
+        err := handler.Register(&acceptor)
+        if err != nil {
+            fmt.Println("Failed to register Acceptor", roleId, err)
+            continue
+        }
+        ln, err := net.Listen("tcp", address)
+        if err != nil {
+            fmt.Println("Listening error:", err)
+            return
+        }
+        go acceptor.run(handler, ln)
     }
 
-    role.roleId = 2
+    role.roleId = 5
     proposer := ProposerRole{role, 0, ""}
     go proposer.run()
 
