@@ -4,40 +4,64 @@ import (
     "fmt"
     "net/rpc"
     "time"
-    "github/paxoscluster/role"
+    "github/paxoscluster/acceptor"
 )
 
 /*
  * Proposer Role
  */
 type ProposerRole struct {
-    role.Role
+    RoleId uint64
+    Client chan string
     ProposalId uint64
     Value string
 }
 
-// Connects to Acceptors
-func (this *ProposerRole) connect() (map[uint64]*rpc.Client, error) {
-    acceptors := make(map[uint64]*rpc.Client)
-    for key, val := range this.Role.Peers {
-        cxn, err := rpc.Dial("tcp", val)
-        if err != nil { return acceptors, err }
-        acceptors[key] = cxn
+func (this *ProposerRole) Heartbeat(req *uint64, reply *bool) error {
+    fmt.Println("Role", this.RoleId, "received heartbeat from", *req)
+    *reply = true
+    return nil
+}
+
+func (this *ProposerRole) electLeader() (bool, error) {
+    return true, nil
+}
+
+// Executes single rount of Paxos protocol
+func (this *ProposerRole) paxos(acceptors map[uint64]*rpc.Client) (error) {
+    notChosen := true
+    this.ProposalId = 0
+    this.Value = <- this.Client
+
+    for notChosen {
+        this.ProposalId += this.RoleId
+
+        // Executes prepare phase
+        success, err := this.preparePhase(acceptors)
+        if err != nil { return err }
+
+        // Executes proposal phase
+        if success {
+            success, err = this.proposalPhase(acceptors)
+            if err != nil { return err }
+            notChosen = !success
+        }
     }
-    return acceptors, nil
+
+    return nil
 }
 
 // Prepare phase
-func (this *ProposerRole) preparePhase(acceptors map[uint64]*rpc.Client) (bool, error) {
-    peerCount := len(this.Role.Peers)
+func (this *ProposerRole) preparePhase(peers map[uint64]*rpc.Client) (bool, error) {
+    peerCount := len(peers)
     majority := peerCount / 2 + 1
     endpoint := make(chan *rpc.Call, peerCount)
 
     // Sends out promise requests
-    req := &role.PromiseReq{this.ProposalId}
-    for _, acceptor := range acceptors {
-        var promiseReply role.Promise
-        acceptor.Go("AcceptorRole.Prepare", req, &promiseReply, endpoint)
+    request := &acceptor.PrepareReq{this.ProposalId}
+    for _, peer := range peers {
+        var response acceptor.PrepareResp
+        peer.Go("AcceptorRole.Prepare", request, &response, endpoint)
     }
     
     // Waits for promises from majority of acceptors
@@ -45,11 +69,11 @@ func (this *ProposerRole) preparePhase(acceptors map[uint64]*rpc.Client) (bool, 
     promiseCount := 0
     var highestAccepted uint64 = 0
     for promiseCount < majority && replyCount < peerCount {
-        var promise role.Promise
+        var promise acceptor.PrepareResp
         select {
             case reply := <- endpoint: 
                 if reply.Error != nil { return false, reply.Error }
-                promise = *reply.Reply.(*role.Promise)
+                promise = *reply.Reply.(*acceptor.PrepareResp)
                 replyCount++
             case <- time.After(1000000000):
                 fmt.Println("Prepare phase time-out: proposal", this.ProposalId)
@@ -70,32 +94,32 @@ func (this *ProposerRole) preparePhase(acceptors map[uint64]*rpc.Client) (bool, 
 }
 
 // Proposal phase
-func (this *ProposerRole) proposalPhase(acceptors map[uint64]*rpc.Client) (bool, error) {
-    peerCount := len(this.Role.Peers)
+func (this *ProposerRole) proposalPhase(peers map[uint64]*rpc.Client) (bool, error) {
+    peerCount := len(peers)
     majority := peerCount / 2 + 1
     endpoint := make(chan *rpc.Call, peerCount)
 
     // Sends out proposals
-    proposal := &role.Proposal{this.ProposalId, this.Value}
-    for _, acceptor := range acceptors {
-        var proposalReply uint64
-        acceptor.Go("AcceptorRole.Accept", proposal, &proposalReply, endpoint)
+    request := &acceptor.ProposalReq{this.ProposalId, this.Value}
+    for _, peer := range peers {
+        var response acceptor.ProposalResp
+        peer.Go("AcceptorRole.Accept", request, &response, endpoint)
     }
 
     // Waits for acceptance from majority of acceptors
     acceptCount := 0
     for acceptCount < majority {
-        var acceptedId uint64
+        var response acceptor.ProposalResp
         select {
             case reply := <- endpoint :
                 if reply.Error != nil { return false, reply.Error }
-                acceptedId = *reply.Reply.(*uint64)
+                response = *reply.Reply.(*acceptor.ProposalResp)
             case <- time.After(1000000000):
                 fmt.Println("Accept phase time-out: proposal", this.ProposalId)
                 return false, nil
         }
 
-        if acceptedId <= this.ProposalId {
+        if response.AcceptedId <= this.ProposalId {
             acceptCount++
         } else {
             return false, nil
@@ -104,43 +128,4 @@ func (this *ProposerRole) proposalPhase(acceptors map[uint64]*rpc.Client) (bool,
 
     fmt.Println("Majority accepted proposal", this.ProposalId, "with value", this.Value)
     return true, nil
-}
-
-func (this *ProposerRole) Run() {
-    // Connects to acceptors
-    acceptors, err := this.connect()
-    if err != nil {
-        fmt.Println("Connection error:", err)
-        return
-    }
-
-    // Initiates Paxos protocol
-    notChosen := true
-    this.ProposalId = 0
-    this.Value = <- this.Role.Client
-    if err != nil {
-        fmt.Println("Client request error", err)
-        return
-    }
-
-    for notChosen {
-        this.ProposalId += this.Role.RoleId
-
-        // Executes prepare phase
-        success, err := this.preparePhase(acceptors)
-        if err != nil {
-            fmt.Println("Prepare phase error:", err)
-            return
-        }
-
-        // Executes proposal phase
-        if success {
-            success, err = this.proposalPhase(acceptors)
-            if err != nil {
-                fmt.Println("Proposal phase error:", err)
-                return
-            }
-            notChosen = !success
-        }
-    }
 }

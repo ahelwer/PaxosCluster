@@ -2,16 +2,13 @@ package acceptor
 
 import (
     "fmt"
-    "net"
-    "net/rpc"
-    "github/paxoscluster/role"
 )
 
 /*
  * Acceptor Role
  */
 type AcceptorRole struct {
-    role.Role
+    RoleId uint64
     MinProposalId uint64
     AcceptedProposalId uint64
     AcceptedValue string
@@ -26,8 +23,20 @@ func max(a uint64, b uint64) uint64 {
     }
 }
 
-func (this *AcceptorRole) Prepare(req *role.PromiseReq, reply *role.Promise) error {
-    fmt.Println("Acceptor", this.Role.RoleId, "considering promise", req.ProposalId, "vs", this.MinProposalId)
+// Request sent out by proposer during prepare phase
+type PrepareReq struct {
+    ProposalId uint64
+}
+
+// Response sent by acceptors during prepare phase
+type PrepareResp struct {
+    PromiseAccepted bool
+    AcceptedProposalId uint64
+    AcceptedValue string
+}
+
+func (this *AcceptorRole) Prepare(req *PrepareReq, reply *PrepareResp) error {
+    fmt.Println("Acceptor", this.RoleId, "considering promise", req.ProposalId, "vs", this.MinProposalId)
     reply.PromiseAccepted = req.ProposalId > this.MinProposalId
     reply.AcceptedProposalId = this.AcceptedProposalId
     reply.AcceptedValue = this.AcceptedValue
@@ -35,20 +44,23 @@ func (this *AcceptorRole) Prepare(req *role.PromiseReq, reply *role.Promise) err
     return nil
 }
 
-func (this *AcceptorRole) Accept(proposal *role.Proposal, reply *uint64) error {
-    fmt.Println("Acceptor", this.Role.RoleId, "considering proposal", proposal.ProposalId)
+// Request sent out by proposer during proposal phase
+type ProposalReq struct {
+    ProposalId uint64
+    Value string
+}
+
+// Response sent by acceptors during proposal phase
+type ProposalResp struct {
+    AcceptedId uint64
+}
+
+func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) error {
+    fmt.Println("Acceptor", this.RoleId, "considering proposal", proposal.ProposalId)
     if proposal.ProposalId >= this.MinProposalId {
         this.AcceptedProposalId = proposal.ProposalId
         this.AcceptedValue = proposal.Value
     }
-    *reply = this.MinProposalId
+    reply.AcceptedId = this.MinProposalId
     return nil
-}
-
-func (this *AcceptorRole) Run(handler *rpc.Server, ln net.Listener) {
-    for {
-        cxn, err := ln.Accept()
-        if err != nil { continue }
-        go handler.ServeConn(cxn)
-    }
 }
