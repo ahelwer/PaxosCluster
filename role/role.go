@@ -1,7 +1,6 @@
 package role
 
 import (
-    "fmt"
     "time"
     "net"
     "net/rpc"
@@ -9,30 +8,27 @@ import (
     "github/paxoscluster/acceptor"
 )
 
+type Node struct {
+    AcceptorEntity *acceptor.AcceptorRole
+    ProposerEntity *proposer.ProposerRole
+}
+
 // Initialize proposer and acceptor roles
-func Initialize(roleId uint64, client chan string, address string) {
+func Initialize(roleId uint64, address string) (Node, error) {
     acceptorRole := acceptor.AcceptorRole{roleId, 0, 0, ""}
-    proposerRole := proposer.ProposerRole{roleId, client, 0, ""}
+    proposerRole := proposer.Construct(roleId)
+    node := Node{&acceptorRole, proposerRole}
 
     // Registers with RPC server
     handler := rpc.NewServer()
     err := handler.Register(&acceptorRole)
-    if err != nil {
-        fmt.Println("Failed to register Acceptor", roleId, err)
-        return
-    }
-    err = handler.Register(&proposerRole)
-    if err != nil {
-        fmt.Println("Failed to register Proposer", roleId, err)
-        return
-    }
+    if err != nil { return node, err }
+    err = handler.Register(proposerRole)
+    if err != nil { return node, err }
 
     // Listens on specified address
     ln, err := net.Listen("tcp", address)
-    if err != nil {
-        fmt.Println("Listening error:", err)
-        return
-    }
+    if err != nil { return node, err }
 
     // Dispatches connection processing loop
     go func() {
@@ -42,18 +38,22 @@ func Initialize(roleId uint64, client chan string, address string) {
             go handler.ServeConn(cxn)
         }
     }()
+
+    return node, nil
 }
 
-func Run(roleId uint64, addresses map[uint64]string) {
+func Run(roleId uint64, node Node, addresses map[uint64]string) (error) {
     // Connects to peers
     peers, err := connect(addresses)
-    if err != nil {
-        fmt.Println("Connection error:", err)
-        return
-    }
+    if err != nil { return err }
 
     // Dispatches heartbeat signal
     go heartbeat(roleId, peers)
+
+    // Begins leader election
+    go proposer.Run(node.ProposerEntity, roleId, peers)
+
+    return nil
 }
 
 // Connects to peers
@@ -75,6 +75,6 @@ func heartbeat(roleId uint64, peers map[uint64]*rpc.Client) {
             var response bool
             peer.Go("ProposerRole.Heartbeat", &request, &response, nil)
         }
-        time.Sleep(1000 * time.Millisecond)
+        time.Sleep(time.Second)
     }
 }

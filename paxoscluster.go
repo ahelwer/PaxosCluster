@@ -2,11 +2,11 @@ package main
 
 import (
     "fmt"
+    "net/rpc"
     "github/paxoscluster/role"
 )
 
 func main() {
-    client := make(chan string)
     peers := map[uint64]string {
         1: "127.0.0.1:10000",
         2: "127.0.0.1:10001",
@@ -15,17 +15,34 @@ func main() {
         5: "127.0.0.1:10004",
     }
 
+    nodes := make(map[uint64]role.Node)
     for roleId, address := range peers {
-        role.Initialize(roleId, client, address)
+        node, err := role.Initialize(roleId, address)
+        if err != nil {
+            fmt.Println("Role", roleId, "init error:", err)
+            continue
+        }
+        nodes[roleId] = node
     }
 
-    for roleId := range peers {
-        role.Run(roleId, peers)
+    for roleId, node := range nodes {
+        err := role.Run(roleId, node, peers)
+        if err != nil {
+            fmt.Println("Role", roleId, "run error:", err)
+            continue
+        }
     }
 
-    //client <- "Hello, world!"
+    cxn, err := rpc.Dial("tcp", peers[5])
+    for {
+        var input string
+        fmt.Scanln(&input)
+        var output string
+        err = cxn.Call("ProposerRole.Replicate", &input, &output)
+        if err != nil {
+            fmt.Println(err)
+        }
+    }
 
-    var input string
-    fmt.Scanln(&input)
 }
 
