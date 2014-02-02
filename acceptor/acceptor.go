@@ -2,6 +2,7 @@ package acceptor
 
 import (
     "fmt"
+    "github/paxoscluster/replicatedlog"
 )
 
 /*
@@ -10,12 +11,12 @@ import (
 type AcceptorRole struct {
     roleId uint64
     minProposalId uint64
-    log []string
+    log *replicatedlog.Log
 }
 
 // Constructor for AcceptorRole
-func Construct(roleId uint64, log []string) *AcceptorRole {
-    this := AcceptorRole{roleId, 0, 0, log}
+func Construct(roleId uint64, log *replicatedlog.Log) *AcceptorRole {
+    this := AcceptorRole{roleId, 0, log}
     return &this
 }
 
@@ -31,13 +32,13 @@ func max(a uint64, b uint64) uint64 {
 // Request sent out by proposer during prepare phase
 type PrepareReq struct {
     ProposalId uint64
-    Index uint64
+    Index int
 }
 
 // Response sent by acceptors during prepare phase
 type PrepareResp struct {
     PromiseAccepted bool
-    Index uint64
+    Index int
     AcceptedProposalId uint64
     AcceptedValue string
     NoMoreAccepted bool
@@ -45,16 +46,19 @@ type PrepareResp struct {
 
 func (this *AcceptorRole) Prepare(req *PrepareReq, reply *PrepareResp) error {
     fmt.Println("Acceptor", this.roleId, "considering promise", req.ProposalId, "vs", this.minProposalId)
+    logEntry, err := this.log.GetEntryAt(req.Index)
+    if err != nil { return err }
     reply.PromiseAccepted = req.ProposalId > this.minProposalId
-    reply.AcceptedProposalId = this.acceptedProposalId
-    reply.AcceptedValue = this.acceptedValue
-    this.minProposalId = max(req.ProposalId, this.minProposalId)
+    reply.AcceptedProposalId = logEntry.AcceptedProposalId
+    reply.AcceptedValue = logEntry.Value
+    this.minProposalId = max(req.ProposalId, logEntry.AcceptedProposalId)
     return nil
 }
 
 // Request sent out by proposer during proposal phase
 type ProposalReq struct {
     ProposalId uint64
+    Index int
     Value string
 }
 
@@ -66,8 +70,7 @@ type ProposalResp struct {
 func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) error {
     fmt.Println("Acceptor", this.roleId, "considering proposal", proposal.ProposalId)
     if proposal.ProposalId >= this.minProposalId {
-        this.acceptedProposalId = proposal.ProposalId
-        this.acceptedValue = proposal.Value
+        this.log.SetEntryAt(proposal.Index, proposal.Value, proposal.ProposalId)
     }
     reply.AcceptedId = this.minProposalId
     return nil

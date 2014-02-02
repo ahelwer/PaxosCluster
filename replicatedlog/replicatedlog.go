@@ -1,9 +1,9 @@
 package replicatedlog
 
 import (
+    "fmt"
     "sync"
     "math"
-    "errors"
 )
 
 type Log struct {
@@ -13,24 +13,17 @@ type Log struct {
 }
 
 type LogEntry struct {
-    Index uint64
+    Index int
     Value string
-    AcceptedProposal uint64
+    AcceptedProposalId uint64
 }
 
-func Create() *Log {
-    values := make([]string, 1)
-    acceptedProposals := make([]uint64, 1)
-    exclude := sync.Mutex
-    newLog := Log {
-        values
-        acceptedProposals
-        locker
-    }
+func Construct() *Log {
+    newLog := Log{values: make([]string, 1), acceptedProposals: make([]uint64, 1)}
     return &newLog
 }
 
-func (this *Log) FirstEntryNotChosen() (uint64, error) {
+func (this *Log) FirstEntryNotChosen() (int, error) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
@@ -40,12 +33,12 @@ func (this *Log) FirstEntryNotChosen() (uint64, error) {
         }
     }
 
-    append(this.values, "")
-    append(this.acceptedProposals, 0)
+    this.values = append(this.values, "")
+    this.acceptedProposals = append(this.acceptedProposals, 0)
     return len(this.acceptedProposals)-1, nil
 }
 
-func (this *Log) GetEntryAt(index uint64) (LogEntry, error) {
+func (this *Log) GetEntryAt(index int) (LogEntry, error) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
@@ -53,14 +46,14 @@ func (this *Log) GetEntryAt(index uint64) (LogEntry, error) {
 
     if index < len(this.values) && index < len(this.acceptedProposals) {
         entry.Value = this.values[index]
-        entry.AcceptedProposal = this.acceptedProposals[index]
+        entry.AcceptedProposalId = this.acceptedProposals[index]
         return entry, nil
     } else {
-        return entry, errors.New("Log index out of range: " + index)
+        return entry, fmt.Errorf("[replicatedlog.GetEntryAt] Log index out of range: %d", index)
     }
 }
 
-func (this *Log) SetEntry(index uint64, value string, proposalId uint64) error {
+func (this *Log) SetEntryAt(index int, value string, proposalId uint64) error {
     this.exclude.Lock()
     defer this.exclude.Unlock()
     
@@ -70,9 +63,9 @@ func (this *Log) SetEntry(index uint64, value string, proposalId uint64) error {
             this.acceptedProposals[index] = proposalId
             return nil
         } else {
-            return errors.New("Log value already chosen at index " + index)
+            return fmt.Errorf("[replicatedlog.SetEntryAt] Log value already chosen at index %d", index)
         } 
     } else {
-        return errors.New("Log index out of range: " + index)
+        return fmt.Errorf("[replicatedlog.SetEntryAt] Log index out of range: %d", index)
     }
 }

@@ -6,6 +6,7 @@ import (
     "net/rpc"
     "github/paxoscluster/proposer"
     "github/paxoscluster/acceptor"
+    "github/paxoscluster/replicatedlog"
 )
 
 type Node struct {
@@ -15,7 +16,7 @@ type Node struct {
 
 // Initialize proposer and acceptor roles
 func Initialize(roleId uint64, address string) (Node, error) {
-    log := make([]string, 16)
+    log := replicatedlog.Construct()
     acceptorRole := acceptor.Construct(roleId, log)
     proposerRole := proposer.Construct(roleId, log)
     node := Node{acceptorRole, proposerRole}
