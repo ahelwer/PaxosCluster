@@ -4,54 +4,82 @@ import (
     "fmt"
     "net/rpc"
     "time"
+    "errors"
     "github/paxoscluster/acceptor"
 )
 
 type ProposerRole struct {
     roleId uint64
     proposalId uint64
-    value string
-    client chan string
+    log []string
+    client chan ClientRequest
     heartbeat chan uint64
+    terminator chan bool
 }
 
 // Constructor for ProposerRole
-func Construct(roleId uint64) *ProposerRole {
-    client := make(chan string, 32)
-    heartbeat := make(chan uint64, 32)
-    this := ProposerRole{roleId, 0, "", client, heartbeat}
+func Construct(roleId uint64, log []string) *ProposerRole {
+    client := make(chan ClientRequest)
+    heartbeat := make(chan uint64)
+    terminator := make(chan bool)
+    this := ProposerRole{roleId, 0, log, client, heartbeat, terminator}
     return &this
 }
 
-func Run (this *ProposerRole, roleId uint64, peers map[uint64]*rpc.Client) {
-    this.electLeader()
-    fmt.Println("Elected role", roleId, "as leader.")
+// Starts proposer role state machine
+func Run (this *ProposerRole, peers map[uint64]*rpc.Client) {
+    go this.isNotLeaderState()
+}
+
+// Role is not leader; will reject client requests
+func (this *ProposerRole) isNotLeaderState() {
+    electionNotify := make(chan bool)
+
+    go this.electLeader(electionNotify)
 
     for {
         select {
-            case <- this.heartbeat:
-                fmt.Println("Role", roleId, "stepping down as leader.")
-                this.electLeader()
-            default:
-                this.paxos(peers)
+        case <- electionNotify
+            go this.isLeaderState() 
+            return
+        case request <- this.client:
+            request.reply <- errors.New("This role is not the cluster leader.")
+        case <- this.terminator:
+            return
         }
     }
 }
 
-// Elects self leader if have not received heartbeat from node with higher ID for two seconds
-func (this *ProposerRole) electLeader() {
+// Role is leader; will furnish client requests
+func (this *ProposerRole) isLeaderState() {
     for {
         select {
-            case <- this.heartbeat:
-                continue 
-            case <- time.After(2*time.Second):
-                return
+        case <- this.heartbeat:
+            go this.isNotLeaderState()
+            return
+        case request <- this.client:
+            go func () { request.reply <- this.paxos(request.value, peers) }()
+        case <- this.terminator:
+            return
         }
     }
 }
 
-// Executes single rount of Paxos protocol
-func (this *ProposerRole) paxos(acceptors map[uint64]*rpc.Client) (error) {
+// Elects self leader if not receiving heartbeat signal from role with higher ID
+func (this *ProposerRole) electLeader(electionNotify chan bool) {
+    for {
+        select {
+        case <- this.heartbeat:
+            continue
+        case <- time.After(2*time.Second):
+            electionNotify <- true
+            return
+        }
+    }
+}
+
+// Executes single round of Paxos protocol
+func (this *ProposerRole) paxos(value string, acceptors map[uint64]*rpc.Client) (error) {
     notChosen := true
     this.value = <- this.client
 
@@ -161,11 +189,25 @@ func (this *ProposerRole) Heartbeat(req *uint64, reply *bool) error {
     return nil
 }
 
+type ClientRequest struct {
+    value string
+    reply chan error
+}
+
 // Receives requests from client
-func (this *ProposerRole) Replicate(req *string, reply *string) error {
-    this.client <- *req
-    fmt.Println("Role", this.roleId, "received client request:", *req)
+func (this *ProposerRole) Replicate(value *string, retValue *string) error {
+    fmt.Println("Role", this.roleId, "received client request:", *value)
+    replyChannel := make(chan error)
+    request := ClientRequest{*value, replyChannel}
+    this.client <- request
+    err := <- replyChannel
+    *retValue = *value
+    return err
+}
+
+// Receives termination command
+func (this *ProposerRole) Terminate(req *bool, reply *bool) error {
+    this.terminator <- *req
     *reply = *req
     return nil
 }
-

@@ -9,19 +9,20 @@ import (
 )
 
 type Node struct {
-    AcceptorEntity *acceptor.AcceptorRole
-    ProposerEntity *proposer.ProposerRole
+    acceptorEntity *acceptor.AcceptorRole
+    proposerEntity *proposer.ProposerRole
 }
 
 // Initialize proposer and acceptor roles
 func Initialize(roleId uint64, address string) (Node, error) {
-    acceptorRole := acceptor.AcceptorRole{roleId, 0, 0, ""}
-    proposerRole := proposer.Construct(roleId)
-    node := Node{&acceptorRole, proposerRole}
+    log := make([]string, 16)
+    acceptorRole := acceptor.Construct(roleId, log)
+    proposerRole := proposer.Construct(roleId, log)
+    node := Node{acceptorRole, proposerRole}
 
     // Registers with RPC server
     handler := rpc.NewServer()
-    err := handler.Register(&acceptorRole)
+    err := handler.Register(acceptorRole)
     if err != nil { return node, err }
     err = handler.Register(proposerRole)
     if err != nil { return node, err }
@@ -51,12 +52,12 @@ func Run(roleId uint64, node Node, addresses map[uint64]string) (error) {
     go heartbeat(roleId, peers)
 
     // Begins leader election
-    go proposer.Run(node.ProposerEntity, roleId, peers)
+    go proposer.Run(node.proposerEntity, peers)
 
     return nil
 }
 
-// Connects to peers
+// Connect to peers
 func connect(addresses map[uint64]string) (map[uint64]*rpc.Client, error) {
     peers := make(map[uint64]*rpc.Client)
     for key, val := range addresses {
@@ -67,7 +68,7 @@ func connect(addresses map[uint64]string) (map[uint64]*rpc.Client, error) {
     return peers, nil
 }
 
-// Sends hearbeat signal to peers
+// Send hearbeat signal to peers
 func heartbeat(roleId uint64, peers map[uint64]*rpc.Client) {
     for {
         for _, peer := range peers {

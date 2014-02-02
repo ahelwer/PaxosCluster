@@ -8,10 +8,15 @@ import (
  * Acceptor Role
  */
 type AcceptorRole struct {
-    RoleId uint64
-    MinProposalId uint64
-    AcceptedProposalId uint64
-    AcceptedValue string
+    roleId uint64
+    minProposalId uint64
+    log []string
+}
+
+// Constructor for AcceptorRole
+func Construct(roleId uint64, log []string) *AcceptorRole {
+    this := AcceptorRole{roleId, 0, 0, log}
+    return &this
 }
 
 // Amazingly this function does not exist in the standard library
@@ -26,21 +31,24 @@ func max(a uint64, b uint64) uint64 {
 // Request sent out by proposer during prepare phase
 type PrepareReq struct {
     ProposalId uint64
+    Index uint64
 }
 
 // Response sent by acceptors during prepare phase
 type PrepareResp struct {
     PromiseAccepted bool
+    Index uint64
     AcceptedProposalId uint64
     AcceptedValue string
+    NoMoreAccepted bool
 }
 
 func (this *AcceptorRole) Prepare(req *PrepareReq, reply *PrepareResp) error {
-    fmt.Println("Acceptor", this.RoleId, "considering promise", req.ProposalId, "vs", this.MinProposalId)
-    reply.PromiseAccepted = req.ProposalId > this.MinProposalId
-    reply.AcceptedProposalId = this.AcceptedProposalId
-    reply.AcceptedValue = this.AcceptedValue
-    this.MinProposalId = max(req.ProposalId, this.MinProposalId)
+    fmt.Println("Acceptor", this.roleId, "considering promise", req.ProposalId, "vs", this.minProposalId)
+    reply.PromiseAccepted = req.ProposalId > this.minProposalId
+    reply.AcceptedProposalId = this.acceptedProposalId
+    reply.AcceptedValue = this.acceptedValue
+    this.minProposalId = max(req.ProposalId, this.minProposalId)
     return nil
 }
 
@@ -56,11 +64,11 @@ type ProposalResp struct {
 }
 
 func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) error {
-    fmt.Println("Acceptor", this.RoleId, "considering proposal", proposal.ProposalId)
-    if proposal.ProposalId >= this.MinProposalId {
-        this.AcceptedProposalId = proposal.ProposalId
-        this.AcceptedValue = proposal.Value
+    fmt.Println("Acceptor", this.roleId, "considering proposal", proposal.ProposalId)
+    if proposal.ProposalId >= this.minProposalId {
+        this.acceptedProposalId = proposal.ProposalId
+        this.acceptedValue = proposal.Value
     }
-    reply.AcceptedId = this.MinProposalId
+    reply.AcceptedId = this.minProposalId
     return nil
 }
