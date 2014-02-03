@@ -87,14 +87,15 @@ func (this *ProposerRole) electLeader(electionNotify chan bool) {
 
 // Executes single round of Paxos protocol
 func (this *ProposerRole) paxos(value string, peers map[uint64]*rpc.Client) error {
-    index := 0
     notChosen := true
+    index, err := this.log.FirstEntryNotChosen()
+    if err != nil { return err }
 
     for notChosen {
         this.proposalId += this.roleId
 
         // Executes prepare phase
-        success, index, value, err := this.preparePhase(value, peers)
+        success, value, err := this.preparePhase(index, value, peers)
         if err != nil { return err }
 
         // Executes proposal phase
@@ -111,12 +112,10 @@ func (this *ProposerRole) paxos(value string, peers map[uint64]*rpc.Client) erro
 }
 
 // Prepare phase
-func (this *ProposerRole) preparePhase(value string, peers map[uint64]*rpc.Client) (bool, int, string, error) {
+func (this *ProposerRole) preparePhase(index int, value string, peers map[uint64]*rpc.Client) (bool, string, error) {
     peerCount := len(peers)
     majority := peerCount / 2 + 1
     endpoint := make(chan *rpc.Call, peerCount)
-    index, err := this.log.FirstEntryNotChosen()
-    if err != nil { return false, index, value, err }
 
     // Sends out promise requests
     request := acceptor.PrepareReq{this.proposalId, index}
@@ -133,12 +132,12 @@ func (this *ProposerRole) preparePhase(value string, peers map[uint64]*rpc.Clien
         var promise acceptor.PrepareResp
         select {
             case reply := <- endpoint: 
-                if reply.Error != nil { return false, index, value, reply.Error }
+                if reply.Error != nil { return false, value, reply.Error }
                 promise = *reply.Reply.(*acceptor.PrepareResp)
                 replyCount++
             case <- time.After(time.Second):
                 fmt.Println("Prepare phase time-out: proposal", this.proposalId)
-                return false, index, value, nil
+                return false, value, nil
         }
 
         if promise.PromiseAccepted {
@@ -151,7 +150,7 @@ func (this *ProposerRole) preparePhase(value string, peers map[uint64]*rpc.Clien
     }
 
     fmt.Println("Processed", replyCount, "replies with", promiseCount, "promises.")
-    return promiseCount >= majority, index, value, nil
+    return promiseCount >= majority, value, nil
 }
 
 // Proposal phase
