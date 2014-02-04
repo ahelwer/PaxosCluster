@@ -6,17 +6,25 @@ import (
     "time"
     "errors"
     "math"
+    "sync"
     "github/paxoscluster/replicatedlog"
     "github/paxoscluster/acceptor"
 )
 
+type Peer struct {
+    roleId uint64
+    comm *rpc.Client
+}
+
 type ProposerRole struct {
     roleId uint64
-    proposalId uint64
+    peers []Peer
+    proposalCount uint64
     log *replicatedlog.Log
     client chan ClientRequest
     heartbeat chan uint64
     terminator chan bool
+    exclude sync.Mutex
 }
 
 // Constructor for ProposerRole
@@ -24,29 +32,42 @@ func Construct(roleId uint64, log *replicatedlog.Log) *ProposerRole {
     client := make(chan ClientRequest)
     heartbeat := make(chan uint64)
     terminator := make(chan bool)
-    this := ProposerRole{roleId, 0, log, client, heartbeat, terminator}
+    this := ProposerRole {
+        roleId: roleId,
+        peers: nil,
+        proposalCount: 1,
+        log: log,
+        client: client,
+        heartbeat: heartbeat,
+        terminator: terminator,
+    }
     return &this
 }
 
 // Starts proposer role state machine
 func Run (this *ProposerRole, peers map[uint64]*rpc.Client) {
+    for roleId, peer := range peers {
+        this.peers = append(this.peers, Peer{roleId, peer}) 
+    }
+
     isLeaderStateChannel := make(chan bool)
     isNotLeaderStateChannel := make(chan bool)
     go this.isNotLeaderState(isLeaderStateChannel, isNotLeaderStateChannel)
-    go this.isLeaderState(isNotLeaderStateChannel, isLeaderStateChannel, peers)
+    go this.isLeaderState(isNotLeaderStateChannel, isLeaderStateChannel)
 }
 
 // Role is not leader; will reject client requests
 func (this *ProposerRole) isNotLeaderState(trans chan<- bool, self <-chan bool) {
     electionNotify := make(chan bool)
-    go this.electLeader(electionNotify)
+    startElection := make(chan bool)
+    go this.electLeader(startElection, electionNotify)
 
     for {
         select {
         case <- electionNotify:
             trans <- true
             <- self
-            this.electLeader(electionNotify)
+            startElection <- true
         case request := <- this.client:
             request.reply <- errors.New("This role is not the cluster leader.")
         case <- this.terminator:
@@ -55,8 +76,21 @@ func (this *ProposerRole) isNotLeaderState(trans chan<- bool, self <-chan bool) 
     }
 }
 
+// Elects self leader if not receiving heartbeat signal from role with higher ID
+func (this *ProposerRole) electLeader(startElection <-chan bool, electionNotify chan<- bool) {
+    for {
+        select {
+        case <- this.heartbeat:
+            continue
+        case <- time.After(2*time.Second):
+            electionNotify <- true
+            <- startElection
+        }
+    }
+}
+
 // Role is leader; will furnish client requests
-func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool, peers map[uint64]*rpc.Client) {
+func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool) {
     <- self
 
     for {
@@ -65,108 +99,127 @@ func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool, pee
             trans <- true
             <- self
         case request := <- this.client:
-            go func () { request.reply <- this.paxos(request.value, peers) }()
+            go func () { request.reply <- this.paxos(request.value) }()
         case <- this.terminator:
             return
         }
     }
 }
 
-// Elects self leader if not receiving heartbeat signal from role with higher ID
-func (this *ProposerRole) electLeader(electionNotify chan bool) {
-    for {
-        select {
-        case <- this.heartbeat:
-            continue
-        case <- time.After(2*time.Second):
-            electionNotify <- true
-            return
-        }
-    }
+// Generates a new probably-globally-unique proposal ID with ordering property
+func (this *ProposerRole) generateNextProposalId() uint64 {
+    this.exclude.Lock()
+    defer this.exclude.Unlock()
+
+    proposalId := this.proposalCount * uint64(len(this.peers)) + this.roleId
+    this.proposalCount++
+    return proposalId
 }
 
 // Executes single round of Paxos protocol
-func (this *ProposerRole) paxos(value string, peers map[uint64]*rpc.Client) error {
-    notChosen := true
-    index, err := this.log.FirstEntryNotChosen()
-    if err != nil { return err }
+func (this *ProposerRole) paxos(value string) error {
+    chosen := false
 
-    for notChosen {
-        this.proposalId += this.roleId
+    for !chosen {
+        index := this.log.FirstEntryNotChosen()
+        proposalId := this.generateNextProposalId()
+        usingValue := value
 
-        // Executes prepare phase
-        success, value, err := this.preparePhase(index, value, peers)
+        // Prepare phase
+        peerCount, endpoint := this.sendPrepareRequests(proposalId, index)
+        success, changed, changedValue, err := recvPromises(peerCount, endpoint)
         if err != nil { return err }
 
-        // Executes proposal phase
         if success {
-            success, err = this.proposalPhase(index, value, peers)
+            if changed {
+                usingValue = changedValue
+            }
+
+            // Proposal phase
+            request := acceptor.ProposalReq{proposalId, index, usingValue}
+            peerCount, endpoint := this.sendProposalRequests(request)
+            success, err = recvAccepts(proposalId, peerCount, endpoint)
             if err != nil { return err }
-            notChosen = !success
+
+            if success {
+                fmt.Println("Chose ProposalId:", proposalId, "Index:", index, "Value:", usingValue)
+                this.log.SetEntryAt(index, usingValue, math.MaxUint64)
+                chosen = !changed
+            }
         }
     }
-
-    this.log.SetEntryAt(index, value, math.MaxUint64)
 
     return nil
 }
 
-// Prepare phase
-func (this *ProposerRole) preparePhase(index int, value string, peers map[uint64]*rpc.Client) (bool, string, error) {
-    peerCount := len(peers)
-    majority := peerCount / 2 + 1
-    endpoint := make(chan *rpc.Call, peerCount)
+// Sends out prepare requests to peers
+func (this *ProposerRole) sendPrepareRequests(proposalId uint64, index int) (int, <-chan *rpc.Call) {
+    this.exclude.Lock()
+    defer this.exclude.Unlock()
 
-    // Sends out promise requests
-    request := acceptor.PrepareReq{this.proposalId, index}
-    for _, peer := range peers {
+    peerCount := len(this.peers)
+    endpoint := make(chan *rpc.Call, peerCount)
+    request := acceptor.PrepareReq{proposalId, index}
+    for _, peer := range this.peers {
         var response acceptor.PrepareResp
-        peer.Go("AcceptorRole.Prepare", &request, &response, endpoint)
+        peer.comm.Go("AcceptorRole.Prepare", &request, &response, endpoint)
     }
-    
-    // Waits for promises from majority of acceptors
+    return peerCount, endpoint 
+}
+
+// Receves replies to prepare requests
+func recvPromises(peerCount int, endpoint <-chan *rpc.Call) (bool, bool, string, error) {
+    success := false
+    changed := false
+    value := ""
+    majority := peerCount/2+1
     replyCount := 0
     promiseCount := 0
-    var highestAccepted uint64 = 0
+    highestAccepted := uint64(0)
     for promiseCount < majority && replyCount < peerCount {
         var promise acceptor.PrepareResp
         select {
-            case reply := <- endpoint: 
-                if reply.Error != nil { return false, value, reply.Error }
-                promise = *reply.Reply.(*acceptor.PrepareResp)
-                replyCount++
-            case <- time.After(time.Second):
-                fmt.Println("Prepare phase time-out: proposal", this.proposalId)
-                return false, value, nil
+        case reply := <- endpoint:
+            if reply.Error != nil { return success, changed, value, reply.Error }
+            promise = *reply.Reply.(*acceptor.PrepareResp)
+            replyCount++
+        case <- time.After(time.Second):
+            return success, changed, value, nil
         }
 
         if promise.PromiseAccepted {
             promiseCount++
             if promise.AcceptedProposalId > highestAccepted {
                 highestAccepted = promise.AcceptedProposalId
+                changed = true
                 value = promise.AcceptedValue
             }
         }
     }
 
     fmt.Println("Processed", replyCount, "replies with", promiseCount, "promises.")
-    return promiseCount >= majority, value, nil
+    success = promiseCount >= majority
+    return success, changed, value, nil
 }
 
-// Proposal phase
-func (this *ProposerRole) proposalPhase(index int, value string, peers map[uint64]*rpc.Client) (bool, error) {
-    peerCount := len(peers)
-    majority := peerCount / 2 + 1
+// Sends out proposal requests to peers
+func (this *ProposerRole) sendProposalRequests(request acceptor.ProposalReq) (int, <-chan *rpc.Call) {
+    this.exclude.Lock()
+    defer this.exclude.Unlock()
+
+    peerCount := len(this.peers)
     endpoint := make(chan *rpc.Call, peerCount)
-
-    // Sends out proposals
-    request := acceptor.ProposalReq{this.proposalId, index, value}
-    for _, peer := range peers {
+    for _, peer := range this.peers {
         var response acceptor.ProposalResp
-        peer.Go("AcceptorRole.Accept", &request, &response, endpoint)
+        peer.comm.Go("AcceptorRole.Accept", &request, &response, endpoint)
     }
+    return peerCount, endpoint 
+}
 
-    // Waits for acceptance from majority of acceptors
+
+// Receves replies to proposal
+func recvAccepts(proposalId uint64, peerCount int, endpoint <-chan *rpc.Call) (bool, error) {
+    majority := peerCount/2+1
     acceptCount := 0
     for acceptCount < majority {
         var response acceptor.ProposalResp
@@ -175,18 +228,16 @@ func (this *ProposerRole) proposalPhase(index int, value string, peers map[uint6
                 if reply.Error != nil { return false, reply.Error }
                 response = *reply.Reply.(*acceptor.ProposalResp)
             case <- time.After(time.Second):
-                fmt.Println("Accept phase time-out: proposal", this.proposalId)
                 return false, nil
         }
 
-        if response.AcceptedId <= this.proposalId {
+        if response.AcceptedId <= proposalId {
             acceptCount++
         } else {
             return false, nil
         }
     }
 
-    fmt.Println("Majority accepted proposal", this.proposalId, "with value", value)
     return true, nil
 }
 

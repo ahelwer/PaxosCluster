@@ -23,17 +23,17 @@ func Construct() *Log {
     return &newLog
 }
 
-func (this *Log) FirstEntryNotChosen() (int, error) {
+func (this *Log) FirstEntryNotChosen() int {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
     for idx, val := range this.acceptedProposals {
         if val != math.MaxUint64 {
-            return idx, nil
+            return idx
         }
     }
 
-    return len(this.acceptedProposals), nil
+    return len(this.acceptedProposals)
 }
 
 func (this *Log) GetEntryAt(index int) (LogEntry, error) {
