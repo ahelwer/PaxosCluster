@@ -4,56 +4,43 @@ import (
     "fmt"
     "net/rpc"
     "time"
-    "errors"
     "math"
-    "sync"
     "github/paxoscluster/replicatedlog"
+    "github/paxoscluster/clusterpeers"
     "github/paxoscluster/acceptor"
 )
 
-type Peer struct {
-    roleId uint64
-    comm *rpc.Client
-}
-
 type ProposerRole struct {
     roleId uint64
-    peers []Peer
-    proposalCount uint64
     log *replicatedlog.Log
+    peers *clusterpeers.Cluster
+    nextProposalId chan uint64
     client chan ClientRequest
     heartbeat chan uint64
     terminator chan bool
-    exclude sync.Mutex
 }
 
 // Constructor for ProposerRole
-func Construct(roleId uint64, log *replicatedlog.Log) *ProposerRole {
-    client := make(chan ClientRequest)
-    heartbeat := make(chan uint64)
-    terminator := make(chan bool)
-    this := ProposerRole {
+func Construct(roleId uint64, log *replicatedlog.Log, peers *clusterpeers.Cluster) *ProposerRole {
+    newProposerRole := ProposerRole {
         roleId: roleId,
-        peers: nil,
-        proposalCount: 1,
         log: log,
-        client: client,
-        heartbeat: heartbeat,
-        terminator: terminator,
+        peers: peers,
+        nextProposalId: make(chan uint64),
+        client: make(chan ClientRequest),
+        heartbeat: make(chan uint64),
+        terminator: make(chan bool),
     }
-    return &this
+    return &newProposerRole
 }
 
 // Starts proposer role state machine
-func Run (this *ProposerRole, peers map[uint64]*rpc.Client) {
-    for roleId, peer := range peers {
-        this.peers = append(this.peers, Peer{roleId, peer}) 
-    }
-
+func Run (this *ProposerRole) {
     isLeaderStateChannel := make(chan bool)
     isNotLeaderStateChannel := make(chan bool)
     go this.isNotLeaderState(isLeaderStateChannel, isNotLeaderStateChannel)
     go this.isLeaderState(isNotLeaderStateChannel, isLeaderStateChannel)
+    go this.proposalIdGenerator()
 }
 
 // Role is not leader; will reject client requests
@@ -69,7 +56,7 @@ func (this *ProposerRole) isNotLeaderState(trans chan<- bool, self <-chan bool) 
             <- self
             startElection <- true
         case request := <- this.client:
-            request.reply <- errors.New("This role is not the cluster leader.")
+            request.reply <- fmt.Errorf("This role is not the cluster leader.")
         case <- this.terminator:
             return
         }
@@ -107,13 +94,13 @@ func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool) {
 }
 
 // Generates a new probably-globally-unique proposal ID with ordering property
-func (this *ProposerRole) generateNextProposalId() uint64 {
-    this.exclude.Lock()
-    defer this.exclude.Unlock()
-
-    proposalId := this.proposalCount * uint64(len(this.peers)) + this.roleId
-    this.proposalCount++
-    return proposalId
+func (this *ProposerRole) proposalIdGenerator() {
+    proposalCount := uint64(1)
+    for {
+        proposalId := proposalCount * this.peers.GetPeerCount() + this.roleId
+        this.nextProposalId <- proposalId
+        proposalCount++
+    }
 }
 
 // Executes single round of Paxos protocol
@@ -122,12 +109,13 @@ func (this *ProposerRole) paxos(value string) error {
 
     for !chosen {
         index := this.log.FirstEntryNotChosen()
-        proposalId := this.generateNextProposalId()
+        proposalId := <- this.nextProposalId
         usingValue := value
 
         // Prepare phase
-        peerCount, endpoint := this.sendPrepareRequests(proposalId, index)
-        success, changed, changedValue, err := recvPromises(peerCount, endpoint)
+        request := acceptor.PrepareReq{proposalId, index}
+        peerCount, endpoint := this.peers.BroadcastPrepareRequest(request)
+        success, changed, changedValue, err := this.recvPromises(peerCount, endpoint)
         if err != nil { return err }
 
         if success {
@@ -137,13 +125,14 @@ func (this *ProposerRole) paxos(value string) error {
 
             // Proposal phase
             request := acceptor.ProposalReq{proposalId, index, usingValue}
-            peerCount, endpoint := this.sendProposalRequests(request)
-            success, err = recvAccepts(proposalId, peerCount, endpoint)
+            peerCount, endpoint := this.peers.BroadcastProposalRequest(request)
+            success, err = this.recvAccepts(proposalId, peerCount, endpoint)
             if err != nil { return err }
 
             if success {
                 fmt.Println("Chose ProposalId:", proposalId, "Index:", index, "Value:", usingValue)
-                this.log.SetEntryAt(index, usingValue, math.MaxUint64)
+                err = this.log.SetEntryAt(index, usingValue, math.MaxUint64)
+                if err != nil { return err }
                 chosen = !changed
             }
         }
@@ -152,30 +141,16 @@ func (this *ProposerRole) paxos(value string) error {
     return nil
 }
 
-// Sends out prepare requests to peers
-func (this *ProposerRole) sendPrepareRequests(proposalId uint64, index int) (int, <-chan *rpc.Call) {
-    this.exclude.Lock()
-    defer this.exclude.Unlock()
-
-    peerCount := len(this.peers)
-    endpoint := make(chan *rpc.Call, peerCount)
-    request := acceptor.PrepareReq{proposalId, index}
-    for _, peer := range this.peers {
-        var response acceptor.PrepareResp
-        peer.comm.Go("AcceptorRole.Prepare", &request, &response, endpoint)
-    }
-    return peerCount, endpoint 
-}
-
 // Receves replies to prepare requests
-func recvPromises(peerCount int, endpoint <-chan *rpc.Call) (bool, bool, string, error) {
+func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Call) (bool, bool, string, error) {
     success := false
     changed := false
     value := ""
-    majority := peerCount/2+1
-    replyCount := 0
-    promiseCount := 0
+    majority := this.peers.GetPeerCount()/2+1
+    replyCount := uint64(0)
+    promiseCount := this.peers.GetSkipPromiseCount()
     highestAccepted := uint64(0)
+
     for promiseCount < majority && replyCount < peerCount {
         var promise acceptor.PrepareResp
         select {
@@ -189,11 +164,14 @@ func recvPromises(peerCount int, endpoint <-chan *rpc.Call) (bool, bool, string,
 
         if promise.PromiseAccepted {
             promiseCount++
+
             if promise.AcceptedProposalId > highestAccepted {
                 highestAccepted = promise.AcceptedProposalId
                 changed = true
                 value = promise.AcceptedValue
             }
+
+            this.peers.SetPromiseRequirement(promise.RoleId, !promise.NoMoreAccepted)
         }
     }
 
@@ -202,25 +180,10 @@ func recvPromises(peerCount int, endpoint <-chan *rpc.Call) (bool, bool, string,
     return success, changed, value, nil
 }
 
-// Sends out proposal requests to peers
-func (this *ProposerRole) sendProposalRequests(request acceptor.ProposalReq) (int, <-chan *rpc.Call) {
-    this.exclude.Lock()
-    defer this.exclude.Unlock()
-
-    peerCount := len(this.peers)
-    endpoint := make(chan *rpc.Call, peerCount)
-    for _, peer := range this.peers {
-        var response acceptor.ProposalResp
-        peer.comm.Go("AcceptorRole.Accept", &request, &response, endpoint)
-    }
-    return peerCount, endpoint 
-}
-
-
 // Receves replies to proposal
-func recvAccepts(proposalId uint64, peerCount int, endpoint <-chan *rpc.Call) (bool, error) {
+func (this *ProposerRole) recvAccepts(proposalId uint64, peerCount uint64, endpoint <-chan *rpc.Call) (bool, error) {
     majority := peerCount/2+1
-    acceptCount := 0
+    acceptCount := uint64(0)
     for acceptCount < majority {
         var response acceptor.ProposalResp
         select {
@@ -234,6 +197,7 @@ func recvAccepts(proposalId uint64, peerCount int, endpoint <-chan *rpc.Call) (b
         if response.AcceptedId <= proposalId {
             acceptCount++
         } else {
+            this.peers.SetPromiseRequirement(response.RoleId, true)
             return false, nil
         }
     }
@@ -250,6 +214,7 @@ func (this *ProposerRole) Heartbeat(req *uint64, reply *bool) error {
     return nil
 }
 
+// Client request to replicate data
 type ClientRequest struct {
     value string
     reply chan error

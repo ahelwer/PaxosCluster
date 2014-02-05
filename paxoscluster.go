@@ -15,9 +15,9 @@ func main() {
         5: "127.0.0.1:10004",
     }
 
-    nodes := make(map[uint64]role.Node)
+    nodes := make(map[uint64]*role.Node)
     for roleId, address := range peers {
-        node, err := role.Initialize(roleId, address)
+        node, err := role.Construct(roleId, address, peers)
         if err != nil {
             fmt.Println("Role", roleId, "init error:", err)
             continue
@@ -26,7 +26,7 @@ func main() {
     }
 
     for roleId, node := range nodes {
-        err := role.Run(roleId, node, peers)
+        err := node.Run(roleId)
         if err != nil {
             fmt.Println("Role", roleId, "run error:", err)
             continue

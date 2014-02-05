@@ -23,6 +23,7 @@ func Construct() *Log {
     return &newLog
 }
 
+// Finds the index of the first entry in the log for which no value has been chosen
 func (this *Log) FirstEntryNotChosen() int {
     this.exclude.Lock()
     defer this.exclude.Unlock()
@@ -36,7 +37,26 @@ func (this *Log) FirstEntryNotChosen() int {
     return len(this.acceptedProposals)
 }
 
-func (this *Log) GetEntryAt(index int) (LogEntry, error) {
+// Certifies that no proposals have been accepted past the specified index
+func (this *Log) NoMoreAcceptedPast(index int) bool {
+    this.exclude.Lock()
+    defer this.exclude.Unlock()
+
+    if index+1 >= len(this.acceptedProposals)-1 {
+        return true
+    }
+
+    for _, proposalId := range this.acceptedProposals[index+1:] {
+        if proposalId != 0 {
+            return false
+        }
+    }
+
+    return true
+}
+
+// Returns details of the log entry at the specified index
+func (this *Log) GetEntryAt(index int) LogEntry {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
@@ -45,12 +65,12 @@ func (this *Log) GetEntryAt(index int) (LogEntry, error) {
     if index < len(this.values) && index < len(this.acceptedProposals) {
         entry.Value = this.values[index]
         entry.AcceptedProposalId = this.acceptedProposals[index]
-        return entry, nil
-    } else {
-        return entry, nil
-    }
+    } 
+
+    return entry
 }
 
+// Sets the value of the log entry at the specified index
 func (this *Log) SetEntryAt(index int, value string, proposalId uint64) error {
     this.exclude.Lock()
     defer this.exclude.Unlock()
@@ -70,5 +90,6 @@ func (this *Log) SetEntryAt(index int, value string, proposalId uint64) error {
 
     this.values[index] = value 
     this.acceptedProposals[index] = proposalId
+    fmt.Println("Values:", this.values, "Proposals:", this.acceptedProposals)
     return nil
 }
