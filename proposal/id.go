@@ -20,9 +20,5 @@ func Chosen() Id {
 }
 
 func (this *Id) IsGreaterThan(other Id) bool {
-    if this.RoleId == other.RoleId {
-        return  this.Sequence == -1 || (this.Sequence > other.Sequence && other.Sequence != -1)
-    } else {
-        return this.RoleId > other.RoleId
-    }
+    return  this.Sequence == -1 || (this.Sequence > other.Sequence && other.Sequence != -1)
 }
