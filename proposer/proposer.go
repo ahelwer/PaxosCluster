@@ -4,17 +4,17 @@ import (
     "fmt"
     "net/rpc"
     "time"
-    "math"
-    "github/paxoscluster/replicatedlog"
-    "github/paxoscluster/clusterpeers"
     "github/paxoscluster/acceptor"
+    "github/paxoscluster/proposal"
+    "github/paxoscluster/clusterpeers"
+    "github/paxoscluster/replicatedlog"
 )
 
 type ProposerRole struct {
     roleId uint64
     log *replicatedlog.Log
     peers *clusterpeers.Cluster
-    nextProposalId chan uint64
+    proposals *proposal.Manager
     client chan ClientRequest
     heartbeat chan uint64
     terminator chan bool
@@ -26,7 +26,7 @@ func Construct(roleId uint64, log *replicatedlog.Log, peers *clusterpeers.Cluste
         roleId: roleId,
         log: log,
         peers: peers,
-        nextProposalId: make(chan uint64),
+        proposals: proposal.CreateManager(roleId),    
         client: make(chan ClientRequest),
         heartbeat: make(chan uint64),
         terminator: make(chan bool),
@@ -40,7 +40,6 @@ func Run (this *ProposerRole) {
     isNotLeaderStateChannel := make(chan bool)
     go this.isNotLeaderState(isLeaderStateChannel, isNotLeaderStateChannel)
     go this.isLeaderState(isNotLeaderStateChannel, isLeaderStateChannel)
-    go this.proposalIdGenerator()
 }
 
 // Role is not leader; will reject client requests
@@ -93,27 +92,20 @@ func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool) {
     }
 }
 
-// Generates a new probably-globally-unique proposal ID with ordering property
-func (this *ProposerRole) proposalIdGenerator() {
-    proposalCount := uint64(1)
-    for {
-        proposalId := proposalCount * this.peers.GetPeerCount() + this.roleId
-        this.nextProposalId <- proposalId
-        proposalCount++
-    }
-}
-
 // Executes single round of Paxos protocol
 func (this *ProposerRole) paxos(value string) error {
     chosen := false
 
     for !chosen {
-        index := this.log.FirstEntryNotChosen()
-        proposalId := <- this.nextProposalId
+        index := this.log.GetFirstUnchosenIndex()
+        proposalId := this.proposals.GenerateNextProposalId()
         usingValue := value
 
         // Prepare phase
-        request := acceptor.PrepareReq{proposalId, index}
+        request := acceptor.PrepareReq {
+            ProposalId: proposalId, 
+            Index: index,
+        }
         peerCount, endpoint := this.peers.BroadcastPrepareRequest(request)
         success, changed, changedValue, err := this.recvPromises(peerCount, endpoint)
         if err != nil { return err }
@@ -124,15 +116,19 @@ func (this *ProposerRole) paxos(value string) error {
             }
 
             // Proposal phase
-            request := acceptor.ProposalReq{proposalId, index, usingValue}
+            request := acceptor.ProposalReq {
+                ProposalId: proposalId, 
+                Index: index, 
+                Value: usingValue, 
+                FirstUnchosenIndex: this.log.GetFirstUnchosenIndex(),
+            }
             peerCount, endpoint := this.peers.BroadcastProposalRequest(request)
             success, err = this.recvAccepts(proposalId, peerCount, endpoint)
             if err != nil { return err }
 
             if success {
                 fmt.Println("Chose ProposalId:", proposalId, "Index:", index, "Value:", usingValue)
-                err = this.log.SetEntryAt(index, usingValue, math.MaxUint64)
-                if err != nil { return err }
+                this.log.SetEntryAt(index, usingValue, proposal.Chosen())
                 chosen = !changed
             }
         }
@@ -149,7 +145,7 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
     majority := this.peers.GetPeerCount()/2+1
     replyCount := uint64(0)
     promiseCount := this.peers.GetSkipPromiseCount()
-    highestAccepted := uint64(0)
+    highestAccepted := proposal.Default()
 
     for promiseCount < majority && replyCount < peerCount {
         var promise acceptor.PrepareResp
@@ -165,7 +161,7 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
         if promise.PromiseAccepted {
             promiseCount++
 
-            if promise.AcceptedProposalId > highestAccepted {
+            if promise.AcceptedProposalId.IsGreaterThan(highestAccepted) {
                 highestAccepted = promise.AcceptedProposalId
                 changed = true
                 value = promise.AcceptedValue
@@ -181,7 +177,7 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
 }
 
 // Receves replies to proposal
-func (this *ProposerRole) recvAccepts(proposalId uint64, peerCount uint64, endpoint <-chan *rpc.Call) (bool, error) {
+func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, endpoint <-chan *rpc.Call) (bool, error) {
     majority := peerCount/2+1
     acceptCount := uint64(0)
     for acceptCount < majority {
@@ -194,7 +190,7 @@ func (this *ProposerRole) recvAccepts(proposalId uint64, peerCount uint64, endpo
                 return false, nil
         }
 
-        if response.AcceptedId <= proposalId {
+        if proposalId.IsGreaterThan(response.AcceptedId) || proposalId == response.AcceptedId {
             acceptCount++
         } else {
             this.peers.SetPromiseRequirement(response.RoleId, true)
