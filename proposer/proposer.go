@@ -184,12 +184,14 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
 func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, endpoint <-chan *rpc.Call) (bool, error) {
     majority := peerCount/2+1
     acceptCount := uint64(0)
+    replyCount := uint64(0)
     for acceptCount < majority {
         var response acceptor.ProposalResp
         select {
             case reply := <- endpoint :
                 if reply.Error != nil { return false, reply.Error }
                 response = *reply.Reply.(*acceptor.ProposalResp)
+                replyCount++
             case <- time.After(time.Second):
                 return false, nil
         }
@@ -200,9 +202,39 @@ func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, 
             this.peers.SetPromiseRequirement(response.RoleId, true)
             return false, nil
         }
+
+        if this.log.GetFirstUnchosenIndex() > response.FirstUnchosenIndex {
+            go this.notifyOfSuccess(response.RoleId, response.FirstUnchosenIndex)
+        }
     }
 
     return true, nil
+}
+
+func (this *ProposerRole) notifyOfSuccess(roleId uint64, index int) {
+    for this.log.GetFirstUnchosenIndex() > index {
+        logEntry := this.log.GetEntryAt(index)
+
+        if logEntry.AcceptedProposalId != proposal.Chosen() {
+            fmt.Println("FATAL ERROR: cluster state corrupted")
+            this.terminator <- true
+        }
+
+        info := acceptor.SuccessNotify {
+            Index: index,
+            Value: logEntry.Value,
+        }
+
+        endpoint := this.peers.NotifyOfSuccess(roleId, info)
+
+        select {
+        case response := <- endpoint:
+            index = *response.Reply.(*int)
+            continue
+        case <- time.After(time.Second):
+            continue
+        }
+    }
 }
 
 // Catches heartbeat signal as a remote procedure call

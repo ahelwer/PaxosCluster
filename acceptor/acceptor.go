@@ -59,6 +59,7 @@ type ProposalReq struct {
 type ProposalResp struct {
     AcceptedId proposal.Id
     RoleId uint64
+    FirstUnchosenIndex int
 }
 
 func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) error {
@@ -70,5 +71,17 @@ func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) err
     }
     reply.AcceptedId = minProposalId
     reply.RoleId = this.roleId
+    reply.FirstUnchosenIndex = this.log.GetFirstUnchosenIndex()
+    return nil
+}
+
+type SuccessNotify struct {
+    Index int
+    Value string
+}
+
+func (this *AcceptorRole) Success(info *SuccessNotify, reply *int) error {
+    this.log.SetEntryAt(info.Index, info.Value, proposal.Chosen())
+    *reply = this.log.GetFirstUnchosenIndex()
     return nil
 }

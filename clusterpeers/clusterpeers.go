@@ -154,3 +154,10 @@ func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq) (uin
 
     return peerCount, endpoint 
 }
+
+func (this *Cluster) NotifyOfSuccess(roleId uint64, info acceptor.SuccessNotify) <-chan *rpc.Call {
+    endpoint := make(chan *rpc.Call)
+    var firstUnchosenIndex int
+    this.nodes[roleId].comm.Go("AcceptorRole.Success", &info, &firstUnchosenIndex, endpoint)
+    return endpoint
+}
