@@ -7,41 +7,28 @@ import (
 )
 
 func main() {
-    peers := map[uint64]string {
-        1: "127.0.0.1:10000",
-        2: "127.0.0.1:10001",
-        3: "127.0.0.1:10002",
-        4: "127.0.0.1:10003",
-        5: "127.0.0.1:10004",
-    }
-
+    roles := []uint64{1, 2, 3, 4, 5}
     nodes := make(map[uint64]*role.Node)
-    for roleId, address := range peers {
-        node, err := role.Construct(roleId, address, peers)
-        if err != nil {
-            fmt.Println("Role", roleId, "init error:", err)
-            continue
-        }
+    addresses:= make(map[uint64]string)
+    for _, roleId := range roles {
+        node, address, err := role.ConstructNode(roleId)
+        if err != nil { panic(err) }
         nodes[roleId] = node
+        addresses[roleId] = address
     }
 
-    for roleId, node := range nodes {
-        err := node.Run(roleId)
-        if err != nil {
-            fmt.Println("Role", roleId, "run error:", err)
-            continue
-        }
+    for _, node := range nodes {
+        err := node.Run()
+        if err != nil { panic(err) }
     }
 
-    cxn, err := rpc.Dial("tcp", peers[5])
+    cxn, err := rpc.Dial("tcp", addresses[5])
     for {
         var input string
         fmt.Scanln(&input)
         var output string
         err = cxn.Call("ProposerRole.Replicate", &input, &output)
-        if err != nil {
-            fmt.Println(err)
-        }
+        if err != nil { fmt.Println(err) }
     }
 
 }

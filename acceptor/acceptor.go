@@ -36,9 +36,11 @@ type PrepareResp struct {
 }
 
 func (this *AcceptorRole) Prepare(req *PrepareReq, reply *PrepareResp) error {
-    fmt.Println("Acceptor", this.roleId, "considering promise", req.ProposalId)
+    minProposalId := this.log.GetMinProposalId()
+    fmt.Println("Acceptor", this.roleId, "considering promise", req.ProposalId, 
+                "vs", minProposalId, "for", req.Index)
     logEntry := this.log.GetEntryAt(req.Index)
-    reply.PromiseAccepted = req.ProposalId.IsGreaterThan(this.log.GetMinProposalId())
+    reply.PromiseAccepted = req.ProposalId.IsGreaterThan(minProposalId)
     reply.AcceptedProposalId = logEntry.AcceptedProposalId
     reply.AcceptedValue = logEntry.Value
     reply.NoMoreAccepted = this.log.NoMoreAcceptedPast(req.Index)
@@ -63,7 +65,8 @@ type ProposalResp struct {
 }
 
 func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) error {
-    fmt.Println("Acceptor", this.roleId, "considering proposal", proposal.ProposalId)
+    fmt.Println("Acceptor", this.roleId, "considering proposal", proposal.ProposalId,
+                "of", proposal.Value, "for", proposal.Index)
     this.log.MarkAsAccepted(proposal.ProposalId, proposal.FirstUnchosenIndex)
     minProposalId := this.log.GetMinProposalId()
     if proposal.ProposalId.IsGreaterThan(minProposalId) || proposal.ProposalId == minProposalId {
@@ -81,6 +84,7 @@ type SuccessNotify struct {
 }
 
 func (this *AcceptorRole) Success(info *SuccessNotify, reply *int) error {
+    fmt.Println("Acceptor", this.roleId, "marking", info.Index, "as", info.Value)
     this.log.SetEntryAt(info.Index, info.Value, proposal.Chosen())
     *reply = this.log.GetFirstUnchosenIndex()
     return nil

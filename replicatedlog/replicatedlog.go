@@ -1,8 +1,12 @@
 package replicatedlog
 
 import (
+    "os"
+    "io"
     "fmt"
     "sync"
+    "strconv"
+    "encoding/csv"
     "github/paxoscluster/proposal"
 )
 
@@ -20,14 +24,51 @@ type LogEntry struct {
     AcceptedProposalId proposal.Id
 }
 
-func Construct() *Log {
+func ConstructLog(roleId uint64) (*Log, error) {
     newLog := Log {
-        values: make([]string, 1), 
-        acceptedProposals: make([]proposal.Id, 1),
+        values: nil,
+        acceptedProposals: nil,
         minProposalId: proposal.Default(),
         firstUnchosenIndex: 0,
     }
-    return &newLog
+
+    logFile, err := os.Open(fmt.Sprintf("./coldstorage/%d/log.txt", roleId))
+    defer logFile.Close()
+    if err != nil { return &newLog, err }
+    logFileReader := csv.NewReader(logFile)
+
+    err = nil
+    for {
+        record, err := logFileReader.Read() 
+        if err == io.EOF {
+            break
+        } else if err != nil {
+            return &newLog, err
+        }
+
+        proposalRole, err := strconv.ParseUint(record[1], 10, 64)
+        if err != nil { return &newLog, err }
+        sequence, err := strconv.ParseInt(record[2], 10, 64)
+        if err != nil { return &newLog, err }
+
+        newLog.values = append(newLog.values, record[0])
+        newLog.acceptedProposals = append(newLog.acceptedProposals, proposal.Id{proposalRole, sequence})
+    }
+
+    proposalFile, err := os.Open(fmt.Sprintf("./coldstorage/%d/minproposalid.txt", roleId))
+    defer proposalFile.Close()
+    if err != nil { return &newLog, err }
+    proposalFileReader := csv.NewReader(proposalFile)
+    record, err := proposalFileReader.Read()
+    if err != nil && err != io.EOF { return &newLog, err }
+    proposalRole, err := strconv.ParseUint(record[0], 10, 64)
+    if err != nil { return &newLog, err }
+    sequence, err := strconv.ParseInt(record[1], 10, 64)
+    if err != nil { return &newLog, err }
+    newLog.minProposalId = proposal.Id{proposalRole, sequence}
+
+    newLog.updateFirstUnchosenIndex()
+    return &newLog, nil
 }
 
 // Returns the minimum proposal for this log; all lesser proposals should be rejected
@@ -79,7 +120,7 @@ func (this *Log) NoMoreAcceptedPast(index int) bool {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
-    if index+1 >= len(this.acceptedProposals)-1 {
+    if index+1 >= len(this.acceptedProposals) {
         return true
     }
 

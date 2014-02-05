@@ -2,7 +2,6 @@ package proposer
 
 import (
     "fmt"
-    "net/rpc"
     "time"
     "github/paxoscluster/acceptor"
     "github/paxoscluster/proposal"
@@ -26,7 +25,7 @@ func Construct(roleId uint64, log *replicatedlog.Log, peers *clusterpeers.Cluste
         roleId: roleId,
         log: log,
         peers: peers,
-        proposals: proposal.CreateManager(roleId),    
+        proposals: proposal.ConstructManager(roleId),    
         client: make(chan ClientRequest),
         heartbeat: make(chan uint64),
         terminator: make(chan bool),
@@ -35,7 +34,7 @@ func Construct(roleId uint64, log *replicatedlog.Log, peers *clusterpeers.Cluste
 }
 
 // Starts proposer role state machine
-func Run (this *ProposerRole) {
+func Run(this *ProposerRole) {
     isLeaderStateChannel := make(chan bool)
     isNotLeaderStateChannel := make(chan bool)
     go this.isNotLeaderState(isLeaderStateChannel, isNotLeaderStateChannel)
@@ -142,7 +141,7 @@ func (this *ProposerRole) paxos(value string) error {
 }
 
 // Receves replies to prepare requests
-func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Call) (bool, bool, string, error) {
+func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan clusterpeers.Response) (bool, bool, string, error) {
     success := false
     changed := false
     value := ""
@@ -156,7 +155,7 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
         select {
         case reply := <- endpoint:
             if reply.Error != nil { return success, changed, value, reply.Error }
-            promise = *reply.Reply.(*acceptor.PrepareResp)
+            promise = *reply.Data.(*acceptor.PrepareResp)
             replyCount++
         case <- time.After(time.Second):
             return success, changed, value, nil
@@ -169,9 +168,9 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
                 highestAccepted = promise.AcceptedProposalId
                 changed = true
                 value = promise.AcceptedValue
+            } else {
+                this.peers.SetPromiseRequirement(promise.RoleId, !promise.NoMoreAccepted)
             }
-
-            this.peers.SetPromiseRequirement(promise.RoleId, !promise.NoMoreAccepted)
         }
     }
 
@@ -181,7 +180,7 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan *rpc.Ca
 }
 
 // Receves replies to proposal
-func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, endpoint <-chan *rpc.Call) (bool, error) {
+func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, endpoint <-chan clusterpeers.Response) (bool, error) {
     majority := peerCount/2+1
     acceptCount := uint64(0)
     replyCount := uint64(0)
@@ -190,7 +189,7 @@ func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, 
         select {
             case reply := <- endpoint :
                 if reply.Error != nil { return false, reply.Error }
-                response = *reply.Reply.(*acceptor.ProposalResp)
+                response = *reply.Data.(*acceptor.ProposalResp)
                 replyCount++
             case <- time.After(time.Second):
                 return false, nil
@@ -229,7 +228,8 @@ func (this *ProposerRole) notifyOfSuccess(roleId uint64, index int) {
 
         select {
         case response := <- endpoint:
-            index = *response.Reply.(*int)
+            if response.Error != nil { continue }
+            index = *response.Data.(*int)
             continue
         case <- time.After(time.Second):
             continue

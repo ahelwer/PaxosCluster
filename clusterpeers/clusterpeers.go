@@ -3,6 +3,7 @@ package clusterpeers
 import (
     "fmt"
     "sync"
+    "time"
     "net/rpc"
     "github/paxoscluster/acceptor"
 )
@@ -19,6 +20,11 @@ type Peer struct {
     address string
     comm *rpc.Client
     requirePromise bool
+}
+
+type Response struct {
+    Error error
+    Data interface{}
 }
 
 func Construct(addresses map[uint64]string) *Cluster {
@@ -98,24 +104,18 @@ func (this *Cluster) SetPromiseRequirement(roleId uint64, required bool) {
 }
 
 // Sends pulse to all nodes in the cluster
-func (this *Cluster) BroadcastHeartbeat(roleId uint64) error {
+func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
-
-    if !this.hasConnected {
-        return fmt.Errorf("Connection to peers has not been established.")
-    }
 
     for _, peer := range this.nodes {
         var reply bool
         peer.comm.Go("ProposerRole.Heartbeat", &roleId, &reply, nil)
     }
-
-    return nil
 }
 
 // Broadcasts a prepare phase request to the cluster
-func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint64, <-chan *rpc.Call) {
+func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint64, <-chan Response) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
@@ -135,12 +135,13 @@ func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint6
         fmt.Println("Skipping prepare phase")
     }
 
-
-    return peerCount, endpoint 
+    responses := make(chan Response, peerCount)
+    go wrapReply(peerCount, endpoint, responses)
+    return peerCount, responses 
 }
 
 // Broadcasts a proposal phase request to the cluster
-func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq) (uint64, <-chan *rpc.Call) {
+func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq) (uint64, <-chan Response) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
@@ -152,12 +153,35 @@ func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq) (uin
         peerCount++
     }
 
-    return peerCount, endpoint 
+    responses := make(chan Response, peerCount)
+    go wrapReply(peerCount, endpoint, responses)
+    return peerCount, responses 
 }
 
-func (this *Cluster) NotifyOfSuccess(roleId uint64, info acceptor.SuccessNotify) <-chan *rpc.Call {
-    endpoint := make(chan *rpc.Call)
+// Directly notifies a specific node of a chosen value
+func (this *Cluster) NotifyOfSuccess(roleId uint64, info acceptor.SuccessNotify) <-chan Response {
+    endpoint := make(chan *rpc.Call, 1)
     var firstUnchosenIndex int
     this.nodes[roleId].comm.Go("AcceptorRole.Success", &info, &firstUnchosenIndex, endpoint)
-    return endpoint
+
+    response := make(chan Response)
+    go wrapReply(1, endpoint, response)
+    return response
+}
+
+// Wraps RPC return data to remove direct dependency of caller on net/rpc and improve testability
+func wrapReply(peerCount uint64, endpoint <-chan *rpc.Call, forward chan<- Response) {
+    replyCount := uint64(0)
+    for replyCount < peerCount {
+        select {
+        case reply := <- endpoint:
+            forward <- Response {
+                Error: reply.Error,
+                Data: reply.Reply,
+            }
+            replyCount++
+        case <- time.After(2*time.Second):
+            return
+        }
+    }
 }
