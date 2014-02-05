@@ -13,8 +13,8 @@ type Manager struct {
 }
 
 type Id struct {
-    roleId uint64
-    proposal uint64
+    RoleId uint64
+    Proposal uint64
 }
 
 func CreateManager(roleId uint64) *Manager {
@@ -22,6 +22,7 @@ func CreateManager(roleId uint64) *Manager {
         roleId: roleId,
         proposalCount: 0,
     }
+    newManager.GenerateNextProposalId()
     return &newManager
 }
 
@@ -38,31 +39,31 @@ func (this *Manager) GenerateNextProposalId() Id {
 
     this.proposalCount++
     this.currentId = Id {
-        roleId: this.roleId,
-        proposal: this.proposalCount,
+        RoleId: this.roleId,
+        Proposal: this.proposalCount,
     }
     return this.currentId
 }
 
 func Default() Id {
     return Id {
-        roleId: 0,
-        proposal: 0,
+        RoleId: 0,
+        Proposal: 0,
     }
 }
 
 func Chosen() Id {
     return Id {
-        roleId: math.MaxUint64,
-        proposal: math.MaxUint64,
+        RoleId: math.MaxUint64,
+        Proposal: math.MaxUint64,
     }
 }
 
 func (this *Id) IsGreaterThan(other Id) bool {
-    if this.roleId == other.roleId {
-        return this.proposal > other.proposal
+    if this.RoleId == other.RoleId {
+        return this.Proposal > other.Proposal
     } else {
-        return this.roleId > other.roleId
+        return this.RoleId > other.RoleId
     }
 }
 

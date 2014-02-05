@@ -60,14 +60,16 @@ func (this *Log) GetFirstUnchosenIndex() int {
 
 // Updates the location of the first unchosen index; exclude MUST be locked before calling
 func (this *Log) updateFirstUnchosenIndex() {
-    for idx := this.firstUnchosenIndex; idx < len(this.acceptedProposals); idx++ {
+    limit := len(this.acceptedProposals)
+
+    for idx := this.firstUnchosenIndex; idx < limit; idx++ {
         if this.acceptedProposals[idx] != proposal.Chosen() {
             this.firstUnchosenIndex = idx
             break
         }
     }
 
-    if this.firstUnchosenIndex == len(this.acceptedProposals)-1 {
+    if  this.firstUnchosenIndex == limit-1 && this.acceptedProposals[limit-1] == proposal.Chosen() {
         this.firstUnchosenIndex = len(this.acceptedProposals)
     }
 }

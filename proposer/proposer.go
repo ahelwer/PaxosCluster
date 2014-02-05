@@ -98,7 +98,7 @@ func (this *ProposerRole) paxos(value string) error {
 
     for !chosen {
         index := this.log.GetFirstUnchosenIndex()
-        proposalId := this.proposals.GenerateNextProposalId()
+        proposalId := this.proposals.GetCurrentProposalId()
         usingValue := value
 
         // Prepare phase
@@ -130,7 +130,11 @@ func (this *ProposerRole) paxos(value string) error {
                 fmt.Println("Chose ProposalId:", proposalId, "Index:", index, "Value:", usingValue)
                 this.log.SetEntryAt(index, usingValue, proposal.Chosen())
                 chosen = !changed
+            } else {
+                this.proposals.GenerateNextProposalId()
             }
+        } else {
+            this.proposals.GenerateNextProposalId()
         }
     }
 
