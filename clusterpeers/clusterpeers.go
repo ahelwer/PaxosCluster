@@ -75,6 +75,7 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
         fmt.Println("hostname", name)
         addresses, err := net.LookupHost(name)
         if err != nil { return &newCluster, 0, "", err }
+        fmt.Println("addresses", addresses)
         address := addresses[0]
 
         for id, peer := range newCluster.nodes {

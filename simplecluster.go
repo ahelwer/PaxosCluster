@@ -48,6 +48,7 @@ func main() {
             fmt.Println(err)
             return
         }
+        fmt.Println("Connecting to address", address)
 
         var run string
         fmt.Scanln(&run)
