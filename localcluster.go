@@ -7,22 +7,26 @@ import (
 )
 
 func main() {
-    roles := []uint64{1, 2, 3, 4, 5}
-    nodes := make(map[uint64]*role.Node)
-    addresses:= make(map[uint64]string)
+    roles := []uint64{1,2,3,4,5}
+    var nodes []*role.Node = nil
     for _, roleId := range roles {
-        node, address, err := role.ConstructNode(roleId)
-        if err != nil { panic(err) }
-        nodes[roleId] = node
-        addresses[roleId] = address
+        node, err := role.ConstructNode(roleId)
+        if err != nil {
+            fmt.Println(err)
+            return
+        }
+        nodes = append(nodes, node)
     }
 
     for _, node := range nodes {
         err := node.Run()
-        if err != nil { panic(err) }
+        if err != nil {
+            fmt.Println(err)
+            return
+        }
     }
 
-    cxn, err := rpc.Dial("tcp", addresses[5])
+    cxn, err := rpc.Dial("tcp", "127.0.0.1:10004")
     for {
         var input string
         fmt.Scanln(&input)
@@ -32,4 +36,3 @@ func main() {
     }
 
 }
-

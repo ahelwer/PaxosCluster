@@ -1,14 +1,8 @@
 package role
 
 import (
-    "os"
-    "io"
-    "net"
-    "fmt"
     "time"
     "net/rpc"
-    "strconv"
-    "encoding/csv"
     "github/paxoscluster/proposer"
     "github/paxoscluster/acceptor"
     "github/paxoscluster/replicatedlog"
@@ -24,31 +18,10 @@ type Node struct {
 }
 
 // Initialize proposer and acceptor roles
-func ConstructNode(roleId uint64) (*Node, string, error) {
-    peersFile, err := os.Open("./coldstorage/peers.txt")
-    defer peersFile.Close()
-    if err != nil { return nil, "", err }
-    peersFileReader := csv.NewReader(peersFile)
-
-    err = nil
-    addresses := make(map[uint64]string)
-    for {
-        record, err := peersFileReader.Read() 
-        if err == io.EOF {
-            break
-        } else if err != nil {
-            return nil, "", err
-        }
-        roleId, err := strconv.ParseUint(record[0], 10, 64)
-        if err != nil { return nil, "", err }
-        addresses[roleId] = record[1]
-    }
-    fmt.Println(addresses)
-    address := addresses[roleId]
-
+func ConstructNode(assignedId uint64) (*Node, error) {
+    peers, roleId, err := clusterpeers.ConstructCluster(assignedId)
     log, err := replicatedlog.ConstructLog(roleId)
-    if err != nil { return nil, "", err }
-    peers := clusterpeers.Construct(addresses)
+    if err != nil { return nil, err }
     acceptorRole := acceptor.Construct(roleId, log)
     proposerRole := proposer.Construct(roleId, log, peers)
     node := Node {
@@ -59,27 +32,15 @@ func ConstructNode(roleId uint64) (*Node, string, error) {
         peers: peers,
     }
 
-    // Registers with RPC server
     handler := rpc.NewServer()
     err = handler.Register(acceptorRole)
-    if err != nil { return &node, address, err }
+    if err != nil { return &node, err }
     err = handler.Register(proposerRole)
-    if err != nil { return &node, address, err }
+    if err != nil { return &node, err }
+    err = peers.Listen(handler)
+    if err != nil { return &node, err }
 
-    // Listens on specified address
-    ln, err := net.Listen("tcp", address)
-    if err != nil { return &node, address, err }
-
-    // Dispatches connection processing loop
-    go func() {
-        for {
-            connection, err := ln.Accept()
-            if err != nil { continue }
-            go handler.ServeConn(connection)
-        }
-    }()
-
-    return &node, address, nil
+    return &node, nil
 }
 
 func (this *Node) Run() error {

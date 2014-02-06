@@ -1,14 +1,20 @@
 package clusterpeers
 
 import (
+    "os"
+    "io"
     "fmt"
     "sync"
     "time"
+    "net"
     "net/rpc"
+    "strconv"
+    "encoding/csv"
     "github/paxoscluster/acceptor"
 )
 
 type Cluster struct {
+    roleId uint64
     nodes map[uint64]Peer
     hasConnected bool
     skipPromiseCount uint64
@@ -18,6 +24,7 @@ type Cluster struct {
 type Peer struct {
     roleId uint64
     address string
+    port string
     comm *rpc.Client
     requirePromise bool
 }
@@ -27,24 +34,82 @@ type Response struct {
     Data interface{}
 }
 
-func Construct(addresses map[uint64]string) *Cluster {
+func ConstructCluster(assignedId uint64) (*Cluster, uint64, error) {
     newCluster := Cluster {
         nodes: make(map[uint64]Peer),
+        roleId: 0,
         hasConnected: false,
         skipPromiseCount: 0,
     }
 
-    for roleId, address := range addresses {
+    peersFile, err := os.Open("./coldstorage/peers.txt")
+    defer peersFile.Close()
+    if err != nil { return &newCluster, 0, err }
+    peersFileReader := csv.NewReader(peersFile)
+
+    for {
+        record, err := peersFileReader.Read() 
+        if err == io.EOF {
+            break
+        } else if err != nil {
+            return &newCluster, 0, err
+        }
+
+        roleId, err := strconv.ParseUint(record[0], 10, 64)
+        if err != nil { return &newCluster, 0, err }
+
         newPeer := Peer {
             roleId: roleId,
-            address: address,
+            address: record[1],
+            port: record[2],
             comm: nil,
             requirePromise: true,
         }
-        newCluster.nodes[roleId] = newPeer 
+
+        newCluster.nodes[roleId] = newPeer
     }
 
-    return &newCluster
+    if assignedId == 0 {
+        name, err := os.Hostname()
+        if err != nil { return &newCluster, 0, err }
+        addresses, err := net.LookupHost(name)
+        if err != nil { return &newCluster, 0, err }
+        address := addresses[0]
+
+        for id, peer := range newCluster.nodes {
+            if peer.address == address {
+                newCluster.roleId = id
+                break
+            }
+        }
+
+        if newCluster.roleId == 0 {
+            return &newCluster, 0, fmt.Errorf("Could not find address %s in peers table.", address)
+        }
+    } else {
+        newCluster.roleId = assignedId
+    }
+
+    return &newCluster, newCluster.roleId, nil
+}
+
+// Sets server to listen on this node's port
+func (this *Cluster) Listen(handler *rpc.Server) error {
+    // Listens on specified address
+    self := this.nodes[this.roleId]
+    ln, err := net.Listen("tcp", self.address + ":" + self.port)
+    if err != nil { return err }
+
+    // Dispatches connection processing loop
+    go func() {
+        for {
+            connection, err := ln.Accept()
+            if err != nil { continue }
+            go handler.ServeConn(connection)
+        }
+    }()
+
+    return nil
 }
 
 // Initializes connections to cluster peers
@@ -57,7 +122,7 @@ func (this *Cluster) Connect() error {
     }
 
     for roleId, peer := range this.nodes {
-        connection, err := rpc.Dial("tcp", peer.address)
+        connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)
         if err != nil { return err }
         peer.comm = connection
         this.nodes[roleId] = peer
