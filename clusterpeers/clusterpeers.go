@@ -71,15 +71,12 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
     if assignedId == 0 {
         name, err := os.Hostname()
         if err != nil { return &newCluster, 0, "", err }
-        fmt.Println("hostname", name)
         addresses, err := net.LookupHost(name)
         if err != nil { return &newCluster, 0, "", err }
-        fmt.Println("addresses", addresses)
         address := addresses[0]
 
         for id, peer := range newCluster.nodes {
             if peer.address == address {
-                fmt.Println("found address", peer.address, peer.port)
                 newCluster.roleId = id
                 break
             }
@@ -225,8 +222,10 @@ func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
     peerCount := len(this.nodes)
     endpoint := make(chan *rpc.Call, peerCount)
     for _, peer := range this.nodes {
-        var reply uint64
-        peer.comm.Go("ProposerRole.Heartbeat", &roleId, &reply, endpoint)
+        if peer.comm != nil {
+            var reply uint64
+            peer.comm.Go("ProposerRole.Heartbeat", &roleId, &reply, endpoint)
+        }
     }
 
     // Records nodes which return the heartbeat signal
@@ -270,7 +269,7 @@ func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint6
 
     if this.skipPromiseCount < nodeCount/2+1 {
         for _, peer := range this.nodes {
-            if peer.requirePromise {
+            if peer.requirePromise && peer.comm != nil {
                 var response acceptor.PrepareResp
                 peer.comm.Go("AcceptorRole.Prepare", &request, &response, endpoint)
                 peerCount++
@@ -293,7 +292,7 @@ func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq, filt
     peerCount := uint64(0)
     endpoint := make(chan *rpc.Call, len(this.nodes)) 
     for roleId, peer := range this.nodes {
-        if !filter[roleId] {
+        if !filter[roleId] && peer.comm != nil {
             var response acceptor.ProposalResp
             peer.comm.Go("AcceptorRole.Accept", &request, &response, endpoint)
             peerCount++
