@@ -72,12 +72,14 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
     if assignedId == 0 {
         name, err := os.Hostname()
         if err != nil { return &newCluster, 0, "", err }
+        fmt.Println("hostname", name)
         addresses, err := net.LookupHost(name)
         if err != nil { return &newCluster, 0, "", err }
         address := addresses[0]
 
         for id, peer := range newCluster.nodes {
             if peer.address == address {
+                fmt.Println("found address", peer.address, peer.port)
                 newCluster.roleId = id
                 break
             }
