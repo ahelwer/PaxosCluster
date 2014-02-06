@@ -104,7 +104,7 @@ func (this *Cluster) Listen(handler *rpc.Server) error {
     ln, err := net.Listen("tcp", self.address + ":" + self.port)
     if err != nil { return err }
 
-    fmt.Println("Role", this.roleId, "listening on", self.address + ":" + self.port)
+    fmt.Println("[ NETWORK", this.roleId, "] Listening on", self.address + ":" + self.port)
 
     // Dispatches connection processing loop
     go func() {
@@ -144,13 +144,13 @@ func (this *Cluster) connectionManager() {
         select {
         case roleId := <- this.registerBadConnection:
             if !establishing[roleId] {
-                fmt.Println("Attempting to re-establish connection to", roleId)
+                fmt.Println("[ NETWORK", this.roleId, "] Attempting to re-establish connection to", roleId)
                 establishing[roleId] = true
                 go this.establishConnection(roleId, connectionEstablished)
             }
         case roleId := <- connectionEstablished:
             establishing[roleId] = false
-            fmt.Println("Connection to", roleId, "has been re-established.")
+            fmt.Println("[ NETWORK", this.roleId, "] Connection to", roleId, "has been re-established")
         }
     }
 }
@@ -276,7 +276,7 @@ func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint6
             }
         }
     } else {
-        fmt.Println("Skipping prepare phase")
+        fmt.Println("[ NETWORK", this.roleId, "] Skipping prepare phase: know state of majority")
     }
 
     responses := make(chan Response, peerCount)

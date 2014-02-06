@@ -11,6 +11,7 @@ import (
 )
 
 type Log struct {
+    roleId uint64
     values []string
     acceptedProposals []proposal.Id
     minProposalId proposal.Id
@@ -26,6 +27,7 @@ type LogEntry struct {
 
 func ConstructLog(roleId uint64) (*Log, error) {
     newLog := Log {
+        roleId: roleId,
         values: nil,
         acceptedProposals: nil,
         minProposalId: proposal.Default(),
@@ -181,7 +183,8 @@ func (this *Log) SetEntryAt(index int, value string, proposalId proposal.Id) {
 
     this.values[index] = value 
     this.acceptedProposals[index] = proposalId
-    fmt.Println("Values:", this.values, "Proposals:", this.acceptedProposals)
+    fmt.Println("[ LOG", this.roleId, "] Values:", this.values)
+    fmt.Println("[ LOG", this.roleId, "] Proposals:", this.acceptedProposals)
 
     // Updates firstUnchosenIndex if value is being chosen there
     if proposalId == proposal.Chosen() && this.firstUnchosenIndex == index {

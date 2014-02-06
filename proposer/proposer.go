@@ -54,7 +54,7 @@ func (this *ProposerRole) isNotLeaderState(trans chan<- bool, self <-chan bool) 
             <- self
             startElection <- true
         case request := <- this.client:
-            request.reply <- fmt.Errorf("This role is not the cluster leader.")
+            request.reply <- fmt.Errorf("[ PROPOSER %d ] Failure: not cluster leader", this.roleId)
         case <- this.terminator:
             return
         }
@@ -84,6 +84,7 @@ func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool) {
             trans <- true
             <- self
         case request := <- this.client:
+            fmt.Println("[ PROPOSER", this.roleId, "] Initiating paxos for client request", request.value)
             go func () { request.reply <- this.paxos(request.value) }()
         case <- this.terminator:
             return
@@ -94,6 +95,7 @@ func (this *ProposerRole) isLeaderState(trans chan<- bool, self <-chan bool) {
 // Executes single round of Paxos protocol
 func (this *ProposerRole) paxos(value string) error {
     chosen := false
+    roleId := this.roleId
 
     for !chosen {
         index := this.log.GetFirstUnchosenIndex()
@@ -101,6 +103,7 @@ func (this *ProposerRole) paxos(value string) error {
         usingValue := value
 
         // Prepare phase
+        fmt.Println("[ PROPOSER", roleId, "] Executing prepare phase of protocol for value", usingValue)
         request := acceptor.PrepareReq {
             ProposalId: proposalId, 
             Index: index,
@@ -112,9 +115,11 @@ func (this *ProposerRole) paxos(value string) error {
         if success {
             if changed {
                 usingValue = changedValue
+                fmt.Println("[ PROPOSER", roleId, "] Value", value, "superseded by value", changedValue)
             }
 
             // Proposal phase
+            fmt.Println("[ PROPOSER", roleId, "] Executing proposal phase of protocol for value", usingValue)
             request := acceptor.ProposalReq {
                 ProposalId: proposalId, 
                 Index: index, 
@@ -126,17 +131,19 @@ func (this *ProposerRole) paxos(value string) error {
             if err != nil { return err }
 
             if success {
-                fmt.Println("Chose ProposalId:", proposalId, "Index:", index, "Value:", usingValue)
+                fmt.Println("[ PROPOSER", roleId, "] Success; chose", usingValue, "for log entry", index)
                 this.log.SetEntryAt(index, usingValue, proposal.Chosen())
                 chosen = !changed
             } else {
                 this.proposals.GenerateNextProposalId()
             }
         } else {
+            fmt.Println("[ PROPOSER", roleId, "] Retrying prepare phase for", usingValue)
             this.proposals.GenerateNextProposalId()
         }
     }
 
+    fmt.Println("[ PROPOSER", roleId, "] Paxos protocol execution complete for client request", value)
     return nil
 }
 
@@ -173,7 +180,7 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan cluster
         }
     }
 
-    fmt.Println("Processed", replyCount, "replies with", promiseCount, "promises.")
+    fmt.Println("[ PROPOSER", this.roleId, "] Processed", replyCount, "replies,", promiseCount, "promises.")
     success = promiseCount >= majority
     return success, changed, value, nil
 }
@@ -279,7 +286,7 @@ type ClientRequest struct {
 
 // Receives requests from client
 func (this *ProposerRole) Replicate(value *string, retValue *string) error {
-    fmt.Println("Role", this.roleId, "received client request:", *value)
+    fmt.Println("[ PROPOSER", this.roleId, "] Received client request", *value)
     replyChannel := make(chan error)
     request := ClientRequest{*value, replyChannel}
     this.client <- request

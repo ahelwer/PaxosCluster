@@ -35,6 +35,8 @@ func main() {
             fmt.Println(err)
             return
         }
+
+        fmt.Println("[ CLIENT ] Enter string to be replicated")
         for {
             var input string
             fmt.Scanln(&input)
@@ -49,7 +51,7 @@ func main() {
             return
         }
 
-        fmt.Print("Press Enter once all nodes are running: ")
+        fmt.Print("[ NETWORK ] Press Enter once all nodes are running: ")
         var run string
         fmt.Scanln(&run)
 
@@ -58,13 +60,15 @@ func main() {
             fmt.Println(err)
             return
         }
+
         cxn, err := rpc.Dial("tcp", address)
         if err != nil {
             fmt.Println(err)
             return
         }
+
+        fmt.Println("[ CLIENT ] Enter string to be replicated")
         for {
-            fmt.Println("Enter string to be replicated: ")
             var input string
             fmt.Scanln(&input)
             var output string
