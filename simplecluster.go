@@ -42,6 +42,10 @@ func main() {
             fmt.Println(err)
             return
         }
+
+        var run string
+        fmt.Scanln(&run)
+
         err = node.Run()
         if err != nil {
             fmt.Println(err)
