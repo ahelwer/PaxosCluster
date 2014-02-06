@@ -11,13 +11,15 @@ func main() {
     if len(os.Args) == 1 {
         roles := []uint64{1,2,3,4,5}
         var nodes []*role.Node = nil
+        var addresses []string = nil
         for _, roleId := range roles {
-            node, err := role.ConstructNode(roleId)
+            node, address, err := role.ConstructNode(roleId)
             if err != nil {
                 fmt.Println(err)
                 return
             }
             nodes = append(nodes, node)
+            addresses = append(addresses, address)
         }
 
         for _, node := range nodes {
@@ -28,7 +30,7 @@ func main() {
             }
         }
 
-        cxn, err := rpc.Dial("tcp", "127.0.0.1:10004")
+        cxn, err := rpc.Dial("tcp", addresses[len(addresses)-1])
         if err != nil {
             fmt.Println(err)
             return
@@ -41,7 +43,7 @@ func main() {
             if err != nil { fmt.Println(err) }
         }
     } else {
-        node, err := role.ConstructNode(0)
+        node, address, err := role.ConstructNode(0)
         if err != nil {
             fmt.Println(err)
             return
@@ -55,7 +57,7 @@ func main() {
             fmt.Println(err)
             return
         }
-        cxn, err := rpc.Dial("tcp", os.Args[1])
+        cxn, err := rpc.Dial("tcp", address)
         if err != nil {
             fmt.Println(err)
             return

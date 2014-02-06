@@ -34,7 +34,7 @@ type Response struct {
     Data interface{}
 }
 
-func ConstructCluster(assignedId uint64) (*Cluster, uint64, error) {
+func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
     newCluster := Cluster {
         nodes: make(map[uint64]Peer),
         roleId: 0,
@@ -44,7 +44,7 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, error) {
 
     peersFile, err := os.Open("./coldstorage/peers.txt")
     defer peersFile.Close()
-    if err != nil { return &newCluster, 0, err }
+    if err != nil { return &newCluster, 0, "", err }
     peersFileReader := csv.NewReader(peersFile)
 
     for {
@@ -52,11 +52,11 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, error) {
         if err == io.EOF {
             break
         } else if err != nil {
-            return &newCluster, 0, err
+            return &newCluster, 0, "", err
         }
 
         roleId, err := strconv.ParseUint(record[0], 10, 64)
-        if err != nil { return &newCluster, 0, err }
+        if err != nil { return &newCluster, 0, "", err }
 
         newPeer := Peer {
             roleId: roleId,
@@ -71,9 +71,9 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, error) {
 
     if assignedId == 0 {
         name, err := os.Hostname()
-        if err != nil { return &newCluster, 0, err }
+        if err != nil { return &newCluster, 0, "", err }
         addresses, err := net.LookupHost(name)
-        if err != nil { return &newCluster, 0, err }
+        if err != nil { return &newCluster, 0, "", err }
         address := addresses[0]
 
         for id, peer := range newCluster.nodes {
@@ -84,13 +84,15 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, error) {
         }
 
         if newCluster.roleId == 0 {
-            return &newCluster, 0, fmt.Errorf("Could not find address %s in peers table.", address)
+            return &newCluster, 0, "", fmt.Errorf("Could not find address %s in peers table.", address)
         }
     } else {
         newCluster.roleId = assignedId
     }
 
-    return &newCluster, newCluster.roleId, nil
+    self := newCluster.nodes[newCluster.roleId]
+    address := self.address + ":" + self.port
+    return &newCluster, newCluster.roleId, address, nil
 }
 
 // Sets server to listen on this node's port

@@ -18,10 +18,10 @@ type Node struct {
 }
 
 // Initialize proposer and acceptor roles
-func ConstructNode(assignedId uint64) (*Node, error) {
-    peers, roleId, err := clusterpeers.ConstructCluster(assignedId)
+func ConstructNode(assignedId uint64) (*Node, string, error) {
+    peers, roleId, address, err := clusterpeers.ConstructCluster(assignedId)
     log, err := replicatedlog.ConstructLog(roleId)
-    if err != nil { return nil, err }
+    if err != nil { return nil, address, err }
     acceptorRole := acceptor.Construct(roleId, log)
     proposerRole := proposer.Construct(roleId, log, peers)
     node := Node {
@@ -34,13 +34,13 @@ func ConstructNode(assignedId uint64) (*Node, error) {
 
     handler := rpc.NewServer()
     err = handler.Register(acceptorRole)
-    if err != nil { return &node, err }
+    if err != nil { return &node, address, err }
     err = handler.Register(proposerRole)
-    if err != nil { return &node, err }
+    if err != nil { return &node, address, err }
     err = peers.Listen(handler)
-    if err != nil { return &node, err }
+    if err != nil { return &node, address, err }
 
-    return &node, nil
+    return &node, address, nil
 }
 
 func (this *Node) Run() error {
