@@ -29,6 +29,10 @@ func main() {
         }
 
         cxn, err := rpc.Dial("tcp", "127.0.0.1:10004")
+        if err != nil {
+            fmt.Println(err)
+            return
+        }
         for {
             var input string
             fmt.Scanln(&input)
@@ -51,7 +55,11 @@ func main() {
             fmt.Println(err)
             return
         }
-        cxn, err := rpc.Dial("tcp", "127.0.0.1:10000")
+        cxn, err := rpc.Dial("tcp", os.Args[1])
+        if err != nil {
+            fmt.Println(err)
+            return
+        }
         for {
             var input string
             fmt.Scanln(&input)
