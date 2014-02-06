@@ -121,8 +121,8 @@ func (this *ProposerRole) paxos(value string) error {
                 Value: usingValue, 
                 FirstUnchosenIndex: this.log.GetFirstUnchosenIndex(),
             }
-            peerCount, endpoint := this.peers.BroadcastProposalRequest(request)
-            success, err = this.recvAccepts(proposalId, peerCount, endpoint)
+            peerCount, endpoint := this.peers.BroadcastProposalRequest(request, nil)
+            success, err = this.recvAccepts(request, peerCount, endpoint)
             if err != nil { return err }
 
             if success {
@@ -180,38 +180,67 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan cluster
 }
 
 // Receves replies to proposal
-func (this *ProposerRole) recvAccepts(proposalId proposal.Id, peerCount uint64, endpoint <-chan clusterpeers.Response) (bool, error) {
+func (this *ProposerRole) recvAccepts(request acceptor.ProposalReq, peerCount uint64, endpoint <-chan clusterpeers.Response) (bool, error) {
     majority := peerCount/2+1
     acceptCount := uint64(0)
-    replyCount := uint64(0)
+    received := make(map[uint64]bool)
+
     for acceptCount < majority {
         var response acceptor.ProposalResp
         select {
-            case reply := <- endpoint :
+            case reply := <- endpoint:
                 if reply.Error != nil { return false, reply.Error }
                 response = *reply.Data.(*acceptor.ProposalResp)
-                replyCount++
+                received[response.RoleId] = true
             case <- time.After(time.Second):
                 return false, nil
         }
 
-        if proposalId.IsGreaterThan(response.AcceptedId) || proposalId == response.AcceptedId {
+        if request.ProposalId.IsGreaterThan(response.AcceptedId) ||
+            request.ProposalId == response.AcceptedId {
             acceptCount++
         } else {
             this.peers.SetPromiseRequirement(response.RoleId, true)
             return false, nil
         }
 
-        if this.log.GetFirstUnchosenIndex() > response.FirstUnchosenIndex {
-            go this.notifyOfSuccess(response.RoleId, response.FirstUnchosenIndex)
+        if request.FirstUnchosenIndex > response.FirstUnchosenIndex {
+            go this.notifyOfSuccess(response.RoleId, request.FirstUnchosenIndex, response.FirstUnchosenIndex)
         }
     }
+
+    go this.processAllAccepts(request, peerCount, received, endpoint)
 
     return true, nil
 }
 
-func (this *ProposerRole) notifyOfSuccess(roleId uint64, index int) {
-    for this.log.GetFirstUnchosenIndex() > index {
+func (this *ProposerRole) processAllAccepts(request acceptor.ProposalReq, peerCount uint64, received map[uint64]bool, endpoint <-chan clusterpeers.Response) {
+    for uint64(len(received)) < peerCount {
+        var response acceptor.ProposalResp
+        select {
+        case reply := <- endpoint:
+            if reply.Error != nil { continue }
+            response = *reply.Data.(*acceptor.ProposalResp)
+            received[response.RoleId] = true
+        case <- time.After(2*time.Second):
+            _, endpoint = this.peers.BroadcastProposalRequest(request, received)
+            continue
+        }
+
+        // If failed, set promises as required
+        if response.AcceptedId.IsGreaterThan(request.ProposalId) {
+            this.peers.SetPromiseRequirement(response.RoleId, true)
+        }
+
+        if request.FirstUnchosenIndex > response.FirstUnchosenIndex {
+            go this.notifyOfSuccess(response.RoleId, request.FirstUnchosenIndex, response.FirstUnchosenIndex)
+        }
+    }
+}
+
+// Explicitly transfer chosen values to a role which is missing that information
+func (this *ProposerRole) notifyOfSuccess(roleId uint64, firstUnchosenIndex int, index int) {
+    for firstUnchosenIndex > index {
         logEntry := this.log.GetEntryAt(index)
 
         if logEntry.AcceptedProposalId != proposal.Chosen() {

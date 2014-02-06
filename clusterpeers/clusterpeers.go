@@ -206,16 +206,18 @@ func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint6
 }
 
 // Broadcasts a proposal phase request to the cluster
-func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq) (uint64, <-chan Response) {
+func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq, filter map[uint64]bool) (uint64, <-chan Response) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
     peerCount := uint64(0)
     endpoint := make(chan *rpc.Call, len(this.nodes)) 
-    for _, peer := range this.nodes {
-        var response acceptor.ProposalResp
-        peer.comm.Go("AcceptorRole.Accept", &request, &response, endpoint)
-        peerCount++
+    for roleId, peer := range this.nodes {
+        if !filter[roleId] {
+            var response acceptor.ProposalResp
+            peer.comm.Go("AcceptorRole.Accept", &request, &response, endpoint)
+            peerCount++
+        }
     }
 
     responses := make(chan Response, peerCount)
