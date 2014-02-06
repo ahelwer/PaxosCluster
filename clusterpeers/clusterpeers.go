@@ -231,6 +231,7 @@ func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
 
     // Records nodes which return the heartbeat signal
     received := make(map[uint64]bool)
+    failures := false
     replyCount := 0
     for replyCount < peerCount {
         select {
@@ -238,15 +239,18 @@ func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
             if reply.Error == nil {
                 roleId := *reply.Reply.(*uint64)
                 received[roleId] = true 
+            } else {
+                failures = true
             }
             replyCount++
         case <- time.After(time.Second/2):
+            failures = true
             break
         }
     }
     
     // Registers bad connections if reply was not received
-    if replyCount < peerCount {
+    if failures {
         for roleId := range this.nodes {
             if !received[roleId] {
                 this.registerBadConnection <- roleId
