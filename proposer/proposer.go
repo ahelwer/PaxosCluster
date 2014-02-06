@@ -263,11 +263,11 @@ func (this *ProposerRole) notifyOfSuccess(roleId uint64, firstUnchosenIndex int,
 }
 
 // Catches heartbeat signal as a remote procedure call
-func (this *ProposerRole) Heartbeat(req *uint64, reply *bool) error {
+func (this *ProposerRole) Heartbeat(req *uint64, reply *uint64) error {
     if this.roleId < *req {
         this.heartbeat <- *req
     }
-    *reply = true
+    *reply = this.roleId
     return nil
 }
 

@@ -107,6 +107,8 @@ func (this *Cluster) Listen(handler *rpc.Server) error {
     ln, err := net.Listen("tcp", self.address + ":" + self.port)
     if err != nil { return err }
 
+    fmt.Println("Role", this.roleId, "listening on", self.address + ":" + self.port)
+
     // Dispatches connection processing loop
     go func() {
         for {
@@ -169,8 +171,9 @@ func (this *Cluster) establishConnection(roleId uint64, connectionEstablished ch
             continue
         }
 
-        peer.comm = connection
         this.exclude.Lock()
+        peer = this.nodes[roleId] 
+        peer.comm = connection
         this.nodes[roleId] = peer
         connectionEstablished <- roleId
         this.exclude.Unlock()
@@ -219,9 +222,36 @@ func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
+    peerCount := len(this.nodes)
+    endpoint := make(chan *rpc.Call, peerCount)
     for _, peer := range this.nodes {
-        var reply bool
-        peer.comm.Go("ProposerRole.Heartbeat", &roleId, &reply, nil)
+        var reply uint64
+        peer.comm.Go("ProposerRole.Heartbeat", &roleId, &reply, endpoint)
+    }
+
+    // Records nodes which return the heartbeat signal
+    received := make(map[uint64]bool)
+    replyCount := 0
+    for replyCount < peerCount {
+        select {
+        case reply := <- endpoint:
+            if reply.Error == nil {
+                roleId := *reply.Reply.(*uint64)
+                received[roleId] = true 
+            }
+            replyCount++
+        case <- time.After(time.Second/2):
+            break
+        }
+    }
+    
+    // Registers bad connections if reply was not received
+    if replyCount < peerCount {
+        for roleId := range this.nodes {
+            if !received[roleId] {
+                this.registerBadConnection <- roleId
+            }
+        }
     }
 }
 

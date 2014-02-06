@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-    if len(os.Args) == 1 {
+    if len(os.Args) > 1 {
         roles := []uint64{1,2,3,4,5}
         var nodes []*role.Node = nil
         var addresses []string = nil
@@ -48,8 +48,8 @@ func main() {
             fmt.Println(err)
             return
         }
-        fmt.Println("Connecting to address", address)
 
+        fmt.Print("Press Enter once all nodes are running: ")
         var run string
         fmt.Scanln(&run)
 
@@ -64,6 +64,7 @@ func main() {
             return
         }
         for {
+            fmt.Println("Enter string to be replicated: ")
             var input string
             fmt.Scanln(&input)
             var output string

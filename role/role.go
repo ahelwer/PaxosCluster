@@ -51,7 +51,7 @@ func (this *Node) Run() error {
     // Dispatches heartbeat signal
     go func() {
         for {
-            this.peers.BroadcastHeartbeat(this.roleId)
+            go this.peers.BroadcastHeartbeat(this.roleId)
             time.Sleep(time.Second)
         }
     }()
