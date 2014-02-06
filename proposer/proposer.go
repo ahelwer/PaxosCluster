@@ -154,7 +154,6 @@ func (this *ProposerRole) recvPromises(peerCount uint64, endpoint <-chan cluster
         var promise acceptor.PrepareResp
         select {
         case reply := <- endpoint:
-            if reply.Error != nil { return success, changed, value, reply.Error }
             promise = *reply.Data.(*acceptor.PrepareResp)
             replyCount++
         case <- time.After(time.Second):
@@ -189,7 +188,6 @@ func (this *ProposerRole) recvAccepts(request acceptor.ProposalReq, peerCount ui
         var response acceptor.ProposalResp
         select {
             case reply := <- endpoint:
-                if reply.Error != nil { return false, reply.Error }
                 response = *reply.Data.(*acceptor.ProposalResp)
                 received[response.RoleId] = true
             case <- time.After(time.Second):
@@ -219,7 +217,6 @@ func (this *ProposerRole) processAllAccepts(request acceptor.ProposalReq, peerCo
         var response acceptor.ProposalResp
         select {
         case reply := <- endpoint:
-            if reply.Error != nil { continue }
             response = *reply.Data.(*acceptor.ProposalResp)
             received[response.RoleId] = true
         case <- time.After(2*time.Second):
@@ -257,7 +254,6 @@ func (this *ProposerRole) notifyOfSuccess(roleId uint64, firstUnchosenIndex int,
 
         select {
         case response := <- endpoint:
-            if response.Error != nil { continue }
             index = *response.Data.(*int)
             continue
         case <- time.After(time.Second):

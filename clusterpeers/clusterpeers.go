@@ -16,7 +16,7 @@ import (
 type Cluster struct {
     roleId uint64
     nodes map[uint64]Peer
-    hasConnected bool
+    registerBadConnection chan uint64
     skipPromiseCount uint64
     exclude sync.Mutex
 }
@@ -30,15 +30,14 @@ type Peer struct {
 }
 
 type Response struct {
-    Error error
     Data interface{}
 }
 
 func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
     newCluster := Cluster {
         nodes: make(map[uint64]Peer),
+        registerBadConnection: make(chan uint64),
         roleId: 0,
-        hasConnected: false,
         skipPromiseCount: 0,
     }
 
@@ -95,6 +94,9 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
 
     self := newCluster.nodes[newCluster.roleId]
     address := self.address + ":" + self.port
+
+    go newCluster.connectionManager()
+
     return &newCluster, newCluster.roleId, address, nil
 }
 
@@ -122,19 +124,58 @@ func (this *Cluster) Connect() error {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
-    if this.hasConnected {
-        return fmt.Errorf("Already connected to peers.")
-    }
-
     for roleId, peer := range this.nodes {
         connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)
-        if err != nil { return err }
+        if err != nil {
+            this.registerBadConnection <- roleId
+            continue
+        }
         peer.comm = connection
         this.nodes[roleId] = peer
     }
 
-    this.hasConnected = true
     return nil
+}
+
+// Triages connection complaints, organizes repair attempts
+func (this *Cluster) connectionManager() {
+    establishing := make(map[uint64]bool)
+    connectionEstablished := make(chan uint64)
+    for {
+        select {
+        case roleId := <- this.registerBadConnection:
+            if !establishing[roleId] {
+                fmt.Println("Attempting to re-establish connection to", roleId)
+                establishing[roleId] = true
+                go this.establishConnection(roleId, connectionEstablished)
+            }
+        case roleId := <- connectionEstablished:
+            establishing[roleId] = false
+            fmt.Println("Connection to", roleId, "has been re-established.")
+        }
+    }
+}
+
+// Attempts to re-connect to the specified role
+func (this *Cluster) establishConnection(roleId uint64, connectionEstablished chan<- uint64) {
+    this.exclude.Lock()
+    peer := this.nodes[roleId]
+    this.exclude.Unlock()
+
+    for {
+        connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)            
+        if err != nil {
+            time.Sleep(time.Second)
+            continue
+        }
+
+        peer.comm = connection
+        this.exclude.Lock()
+        this.nodes[roleId] = peer
+        connectionEstablished <- roleId
+        this.exclude.Unlock()
+        return
+    }
 }
 
 // Returns number of peers in cluster
@@ -206,7 +247,7 @@ func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint6
     }
 
     responses := make(chan Response, peerCount)
-    go wrapReply(peerCount, endpoint, responses)
+    go this.wrapReply(peerCount, endpoint, responses)
     return peerCount, responses 
 }
 
@@ -226,7 +267,7 @@ func (this *Cluster) BroadcastProposalRequest(request acceptor.ProposalReq, filt
     }
 
     responses := make(chan Response, peerCount)
-    go wrapReply(peerCount, endpoint, responses)
+    go this.wrapReply(peerCount, endpoint, responses)
     return peerCount, responses 
 }
 
@@ -237,19 +278,18 @@ func (this *Cluster) NotifyOfSuccess(roleId uint64, info acceptor.SuccessNotify)
     this.nodes[roleId].comm.Go("AcceptorRole.Success", &info, &firstUnchosenIndex, endpoint)
 
     response := make(chan Response)
-    go wrapReply(1, endpoint, response)
+    go this.wrapReply(1, endpoint, response)
     return response
 }
 
 // Wraps RPC return data to remove direct dependency of caller on net/rpc and improve testability
-func wrapReply(peerCount uint64, endpoint <-chan *rpc.Call, forward chan<- Response) {
+func (this *Cluster) wrapReply(peerCount uint64, endpoint <-chan *rpc.Call, forward chan<- Response) {
     replyCount := uint64(0)
     for replyCount < peerCount {
         select {
         case reply := <- endpoint:
-            forward <- Response {
-                Error: reply.Error,
-                Data: reply.Reply,
+            if reply.Error == nil {
+                forward <- Response{reply.Reply}
             }
             replyCount++
         case <- time.After(2*time.Second):
