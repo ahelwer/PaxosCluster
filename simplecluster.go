@@ -8,6 +8,8 @@ import (
 )
 
 func main() {
+    nodeAddress := ""
+
     if len(os.Args) > 1 {
         roles := []uint64{1,2,3,4,5}
         var nodes []*role.Node = nil
@@ -30,20 +32,7 @@ func main() {
             }
         }
 
-        cxn, err := rpc.Dial("tcp", addresses[len(addresses)-1])
-        if err != nil {
-            fmt.Println(err)
-            return
-        }
-
-        fmt.Println("[ CLIENT ] Enter string to be replicated")
-        for {
-            var input string
-            fmt.Scanln(&input)
-            var output string
-            err = cxn.Call("ProposerRole.Replicate", &input, &output)
-            if err != nil { fmt.Println(err) }
-        }
+        nodeAddress = addresses[len(addresses)-1]
     } else {
         node, address, err := role.ConstructNode(0)
         if err != nil {
@@ -51,29 +40,27 @@ func main() {
             return
         }
 
-        fmt.Print("[ NETWORK ] Press Enter once all nodes are running: ")
-        var run string
-        fmt.Scanln(&run)
-
         err = node.Run()
         if err != nil {
             fmt.Println(err)
             return
         }
 
-        cxn, err := rpc.Dial("tcp", address)
-        if err != nil {
-            fmt.Println(err)
-            return
-        }
+        nodeAddress = address
+    }
 
-        fmt.Println("[ CLIENT ] Enter string to be replicated")
-        for {
-            var input string
-            fmt.Scanln(&input)
-            var output string
-            err = cxn.Call("ProposerRole.Replicate", &input, &output)
-            if err != nil { fmt.Println(err) }
-        }
+    cxn, err := rpc.Dial("tcp", nodeAddress)
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
+
+    fmt.Println("[ CLIENT ] Once cluster is online, enter string to be replicated") 
+    for {
+        var input string
+        fmt.Scanln(&input)
+        var output string
+        err = cxn.Call("ProposerRole.Replicate", &input, &output)
+        if err != nil { fmt.Println(err) }
     }
 }

@@ -68,12 +68,20 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
         newCluster.nodes[roleId] = newPeer
     }
 
+    // Auto-detects IP address, matches it to a RoleId
     if assignedId == 0 {
         name, err := os.Hostname()
         if err != nil { return &newCluster, 0, "", err }
-        addresses, err := net.LookupHost(name)
+        addresses, err := net.LookupIP(name)
         if err != nil { return &newCluster, 0, "", err }
-        address := addresses[0]
+        address := ""
+        for _, ip := range addresses {
+            ipv4 := ip.To4()
+            if ipv4 != nil {
+                address = ip.String()
+                break
+            }
+        }
 
         for id, peer := range newCluster.nodes {
             if peer.address == address {
@@ -90,7 +98,7 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
     }
 
     self := newCluster.nodes[newCluster.roleId]
-    address := self.address + ":" + self.port
+    address := net.JoinHostPort(self.address, self.port)
 
     go newCluster.connectionManager()
 
@@ -104,10 +112,10 @@ func (this *Cluster) Listen(handler *rpc.Server) error {
 
     // Listens on specified address
     self := this.nodes[this.roleId]
-    ln, err := net.Listen("tcp", self.address + ":" + self.port)
+    ln, err := net.Listen("tcp", net.JoinHostPort(self.address, self.port))
     if err != nil { return err }
 
-    fmt.Println("[ NETWORK", this.roleId, "] Listening on", self.address + ":" + self.port)
+    fmt.Println("[ NETWORK", this.roleId, "] Listening on", net.JoinHostPort(self.address, self.port))
 
     // Dispatches connection processing loop
     go func() {
@@ -129,10 +137,8 @@ func (this *Cluster) Connect() {
     for roleId, peer := range this.nodes {
         connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)
         if err != nil {
-            fmt.Println("Bad connect attempt to", roleId)
             this.registerBadConnection <- roleId
         } else {
-            fmt.Println("Successful connect for", roleId)
             peer.comm = connection
             this.nodes[roleId] = peer
         }
@@ -147,13 +153,13 @@ func (this *Cluster) connectionManager() {
         select {
         case roleId := <- this.registerBadConnection:
             if !establishing[roleId] {
-                fmt.Println("[ NETWORK", this.roleId, "] Attempting to re-establish connection to", roleId)
+                fmt.Println("[ NETWORK", this.roleId, "] Attempting to establish connection to", roleId)
                 establishing[roleId] = true
                 go this.establishConnection(roleId, connectionEstablished)
             }
         case roleId := <- connectionEstablished:
             establishing[roleId] = false
-            fmt.Println("[ NETWORK", this.roleId, "] Connection to", roleId, "has been re-established")
+            fmt.Println("[ NETWORK", this.roleId, "] Connection to", roleId, "has been established")
         }
     }
 }
@@ -239,15 +245,15 @@ func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
         select {
         case reply := <- endpoint:
             if reply.Error == nil {
-                roleId := *reply.Reply.(*uint64)
-                received[roleId] = true 
+                id := *reply.Reply.(*uint64)
+                received[id] = true 
             } else {
                 failures = true
             }
             replyCount++
         case <- time.After(time.Second/2):
             failures = true
-            break
+            replyCount = peerCount
         }
     }
     
@@ -276,11 +282,12 @@ func (this *Cluster) BroadcastPrepareRequest(request acceptor.PrepareReq) (uint6
                 var response acceptor.PrepareResp
                 peer.comm.Go("AcceptorRole.Prepare", &request, &response, endpoint)
                 peerCount++
-            }
+            } 
         }
     } else {
         fmt.Println("[ NETWORK", this.roleId, "] Skipping prepare phase: know state of majority")
     }
+
 
     responses := make(chan Response, peerCount)
     go this.wrapReply(peerCount, endpoint, responses)
