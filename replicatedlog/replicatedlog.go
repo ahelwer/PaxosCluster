@@ -181,10 +181,12 @@ func (this *Log) SetEntryAt(index int, value string, proposalId proposal.Id) {
         this.acceptedProposals = append(this.acceptedProposals, make([]proposal.Id, proposalsDiff)...)
     } 
 
-    this.values[index] = value 
-    this.acceptedProposals[index] = proposalId
-    fmt.Println("[ LOG", this.roleId, "] Values:", this.values)
-    fmt.Println("[ LOG", this.roleId, "] Proposals:", this.acceptedProposals)
+    if this.acceptedProposals[index] != proposal.Chosen() {
+        this.values[index] = value 
+        this.acceptedProposals[index] = proposalId
+        fmt.Println("[ LOG", this.roleId, "] Values:", this.values)
+        fmt.Println("[ LOG", this.roleId, "] Proposals:", this.acceptedProposals)
+    }
 
     // Updates firstUnchosenIndex if value is being chosen there
     if proposalId == proposal.Chosen() && this.firstUnchosenIndex == index {
