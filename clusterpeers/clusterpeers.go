@@ -36,7 +36,7 @@ type Response struct {
 func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
     newCluster := Cluster {
         nodes: make(map[uint64]Peer),
-        registerBadConnection: make(chan uint64),
+        registerBadConnection: make(chan uint64, 16),
         roleId: 0,
         skipPromiseCount: 0,
     }
@@ -99,6 +99,9 @@ func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
 
 // Sets server to listen on this node's port
 func (this *Cluster) Listen(handler *rpc.Server) error {
+    this.exclude.Lock()
+    defer this.exclude.Unlock()
+
     // Listens on specified address
     self := this.nodes[this.roleId]
     ln, err := net.Listen("tcp", self.address + ":" + self.port)
@@ -119,21 +122,21 @@ func (this *Cluster) Listen(handler *rpc.Server) error {
 }
 
 // Initializes connections to cluster peers
-func (this *Cluster) Connect() error {
+func (this *Cluster) Connect() {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
     for roleId, peer := range this.nodes {
         connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)
         if err != nil {
+            fmt.Println("Bad connect attempt to", roleId)
             this.registerBadConnection <- roleId
-            continue
+        } else {
+            fmt.Println("Successful connect for", roleId)
+            peer.comm = connection
+            this.nodes[roleId] = peer
         }
-        peer.comm = connection
-        this.nodes[roleId] = peer
     }
-
-    return nil
 }
 
 // Triages connection complaints, organizes repair attempts

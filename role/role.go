@@ -45,8 +45,7 @@ func ConstructNode(assignedId uint64) (*Node, string, error) {
 
 func (this *Node) Run() error {
     // Connects to peers
-    err := this.peers.Connect()
-    if err != nil { return err }
+    this.peers.Connect()
 
     // Dispatches heartbeat signal
     go func() {
