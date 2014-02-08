@@ -7,24 +7,36 @@ import (
     "net"
     "sync"
     "strconv"
+    "os/signal"
     "encoding/csv"
     "github/paxoscluster/proposal"
 )
 
 type Manager struct {
+    sigint chan os.Signal
     exclude sync.Mutex
 }
 
+// Creates disk access manager for backup & recovery files
 func ConstructManager() (*Manager, error) {
     _, err := os.Stat("coldstorage")
     if err != nil { return nil, err }
-    return new(Manager), nil
+
+    newManager := Manager {
+        sigint: make(chan os.Signal, 1),
+    }
+    signal.Notify(newManager.sigint, os.Interrupt)
+    go newManager.finalize()
+
+    return &newManager, nil
 }
 
 // Finishes all writes and permanently locks in preparation for shutdown
-func (this *Manager) Finalize() {
+func (this *Manager) finalize() {
+    <- this.sigint
     fmt.Println("[ DISK ] Clearing writes before shutdown")
     this.exclude.Lock()
+    os.Exit(0)
 }
 
 // Reads the list of peers from a file on disk
