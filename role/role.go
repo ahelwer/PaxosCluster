@@ -7,6 +7,7 @@ import (
     "github/paxoscluster/acceptor"
     "github/paxoscluster/replicatedlog"
     "github/paxoscluster/clusterpeers"
+    "github/paxoscluster/recovery"
 )
 
 type Node struct {
@@ -15,12 +16,16 @@ type Node struct {
     proposerEntity *proposer.ProposerRole
     log *replicatedlog.Log
     peers *clusterpeers.Cluster
+    disk *recovery.Manager
 }
 
 // Initialize proposer and acceptor roles
 func ConstructNode(assignedId uint64) (*Node, string, error) {
-    peers, roleId, address, err := clusterpeers.ConstructCluster(assignedId)
-    log, err := replicatedlog.ConstructLog(roleId)
+    disk, err := recovery.ConstructManager()
+    if err != nil { return nil, "", err }
+    peers, roleId, address, err := clusterpeers.ConstructCluster(assignedId, disk)
+    if err != nil { return nil, address, err }
+    log, err := replicatedlog.ConstructLog(roleId, disk)
     if err != nil { return nil, address, err }
     acceptorRole := acceptor.Construct(roleId, log)
     proposerRole := proposer.Construct(roleId, log, peers)

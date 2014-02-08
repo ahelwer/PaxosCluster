@@ -1,2 +1,0 @@
-hello,5,1
-world,5,1

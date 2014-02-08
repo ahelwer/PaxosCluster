@@ -2,14 +2,12 @@ package clusterpeers
 
 import (
     "os"
-    "io"
     "fmt"
     "sync"
     "time"
     "net"
     "net/rpc"
-    "strconv"
-    "encoding/csv"
+    "github/paxoscluster/recovery"
     "github/paxoscluster/acceptor"
 )
 
@@ -18,13 +16,13 @@ type Cluster struct {
     nodes map[uint64]Peer
     registerBadConnection chan uint64
     skipPromiseCount uint64
+    disk *recovery.Manager
     exclude sync.Mutex
 }
 
 type Peer struct {
     roleId uint64
     address string
-    port string
     comm *rpc.Client
     requirePromise bool
 }
@@ -33,72 +31,62 @@ type Response struct {
     Data interface{}
 }
 
-func ConstructCluster(assignedId uint64) (*Cluster, uint64, string, error) {
-    newCluster := Cluster {
-        nodes: make(map[uint64]Peer),
-        registerBadConnection: make(chan uint64, 16),
-        roleId: 0,
-        skipPromiseCount: 0,
-    }
+func ConstructCluster(roleId uint64, disk *recovery.Manager) (*Cluster, uint64, string, error) {
+    addresses, err := disk.RetrieveAddresses()
+    if err != nil { return nil, 0, "", err }
 
-    peersFile, err := os.Open("./coldstorage/peers.txt")
-    defer peersFile.Close()
-    if err != nil { return &newCluster, 0, "", err }
-    peersFileReader := csv.NewReader(peersFile)
-
-    for {
-        record, err := peersFileReader.Read() 
-        if err == io.EOF {
-            break
-        } else if err != nil {
-            return &newCluster, 0, "", err
-        }
-
-        roleId, err := strconv.ParseUint(record[0], 10, 64)
-        if err != nil { return &newCluster, 0, "", err }
-
+    // Builds peers map
+    peers := make(map[uint64]Peer)
+    for id, address := range addresses {
         newPeer := Peer {
-            roleId: roleId,
-            address: record[1],
-            port: record[2],
+            roleId: id,
+            address: address,
             comm: nil,
             requirePromise: true,
         }
-
-        newCluster.nodes[roleId] = newPeer
+        peers[id] = newPeer
     }
 
-    // Auto-detects IP address, matches it to a RoleId
-    if assignedId == 0 {
+    // Auto-detects roleId
+    if roleId == 0 {
+        // Finds IPv4 address of current machine
         name, err := os.Hostname()
-        if err != nil { return &newCluster, 0, "", err }
-        addresses, err := net.LookupIP(name)
-        if err != nil { return &newCluster, 0, "", err }
-        address := ""
-        for _, ip := range addresses {
+        if err != nil { return nil, 0, "", err }
+        ipInfo, err := net.LookupIP(name)
+        if err != nil { return nil, 0, "", err }
+        thisAddress := ""
+        for _, ip := range ipInfo {
             ipv4 := ip.To4()
             if ipv4 != nil {
-                address = ip.String()
+                thisAddress = ip.String()
                 break
             }
         }
 
-        for id, peer := range newCluster.nodes {
-            if peer.address == address {
-                newCluster.roleId = id
+        // Matches address to roleId
+        for id, fullAddress := range addresses {
+            ip, _, err := net.SplitHostPort(fullAddress)
+            if err != nil { return nil, 0, "", err }
+            if thisAddress == ip {
+                roleId = id
                 break
             }
         }
 
-        if newCluster.roleId == 0 {
-            return &newCluster, 0, "", fmt.Errorf("Could not find address %s in peers table.", address)
+        if roleId == 0 {
+            return nil, 0, "", fmt.Errorf("Could not find address %s in peers table", thisAddress)
         }
-    } else {
-        newCluster.roleId = assignedId
     }
 
-    self := newCluster.nodes[newCluster.roleId]
-    address := net.JoinHostPort(self.address, self.port)
+    newCluster := Cluster {
+        roleId: roleId,
+        nodes: peers,
+        registerBadConnection: make(chan uint64, 16),
+        skipPromiseCount: 0,
+        disk: disk,
+    }
+
+    address := newCluster.nodes[newCluster.roleId].address
 
     go newCluster.connectionManager()
 
@@ -111,11 +99,10 @@ func (this *Cluster) Listen(handler *rpc.Server) error {
     defer this.exclude.Unlock()
 
     // Listens on specified address
-    self := this.nodes[this.roleId]
-    ln, err := net.Listen("tcp", net.JoinHostPort(self.address, self.port))
+    ln, err := net.Listen("tcp", this.nodes[this.roleId].address)
     if err != nil { return err }
 
-    fmt.Println("[ NETWORK", this.roleId, "] Listening on", net.JoinHostPort(self.address, self.port))
+    fmt.Println("[ NETWORK", this.roleId, "] Listening on", this.nodes[this.roleId].address)
 
     // Dispatches connection processing loop
     go func() {
@@ -135,7 +122,7 @@ func (this *Cluster) Connect() {
     defer this.exclude.Unlock()
 
     for roleId, peer := range this.nodes {
-        connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)
+        connection, err := rpc.Dial("tcp", peer.address)
         if err != nil {
             this.registerBadConnection <- roleId
         } else {
@@ -171,7 +158,7 @@ func (this *Cluster) establishConnection(roleId uint64, connectionEstablished ch
     this.exclude.Unlock()
 
     for {
-        connection, err := rpc.Dial("tcp", peer.address + ":" + peer.port)            
+        connection, err := rpc.Dial("tcp", peer.address)
         if err != nil {
             time.Sleep(time.Second)
             continue
@@ -261,6 +248,12 @@ func (this *Cluster) BroadcastHeartbeat(roleId uint64) {
     if failures {
         for roleId := range this.nodes {
             if !received[roleId] {
+                peer := this.nodes[roleId]
+                if !peer.requirePromise {
+                    this.skipPromiseCount--
+                }
+                peer.requirePromise = true
+                this.nodes[roleId] = peer
                 this.registerBadConnection <- roleId
             }
         }
