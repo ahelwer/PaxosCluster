@@ -286,6 +286,11 @@ type ClientRequest struct {
 
 // Receives requests from client
 func (this *ProposerRole) Replicate(value *string, retValue *string) error {
+    if len(*value) == 0 {
+        *retValue = *value
+        return nil
+    }
+
     fmt.Println("[ PROPOSER", this.roleId, "] Received client request", *value)
     replyChannel := make(chan error)
     request := ClientRequest{*value, replyChannel}
