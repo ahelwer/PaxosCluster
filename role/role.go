@@ -10,58 +10,37 @@ import (
     "github/paxoscluster/recovery"
 )
 
-type Node struct {
-    roleId uint64
-    acceptorEntity *acceptor.AcceptorRole
-    proposerEntity *proposer.ProposerRole
-    log *replicatedlog.Log
-    peers *clusterpeers.Cluster
-    disk *recovery.Manager
-}
-
 // Initialize proposer and acceptor roles
-func ConstructNode(assignedId uint64) (*Node, string, error) {
-    disk, err := recovery.ConstructManager()
-    if err != nil { return nil, "", err }
-    peers, roleId, address, err := clusterpeers.ConstructCluster(assignedId, disk)
-    if err != nil { return nil, address, err }
+func LaunchNode(assignedId uint64, disk *recovery.Manager) (string, error) {
+    cluster, roleId, address, err := clusterpeers.ConstructCluster(assignedId, disk)
+    if err != nil { return address, err }
     log, err := replicatedlog.ConstructLog(roleId, disk)
-    if err != nil { return nil, address, err }
+    if err != nil { return address, err }
+
     acceptorRole := acceptor.Construct(roleId, log)
-    proposerRole := proposer.Construct(roleId, log, peers)
-    node := Node {
-        roleId: roleId,
-        acceptorEntity: acceptorRole,
-        proposerEntity: proposerRole,
-        log: log,
-        peers: peers,
-    }
+    proposerRole := proposer.Construct(roleId, log, cluster)
 
     handler := rpc.NewServer()
     err = handler.Register(acceptorRole)
-    if err != nil { return &node, address, err }
+    if err != nil { return address, err }
     err = handler.Register(proposerRole)
-    if err != nil { return &node, address, err }
-    err = peers.Listen(handler)
-    if err != nil { return &node, address, err }
+    if err != nil { return address, err }
+    err = cluster.Listen(handler)
+    if err != nil { return address, err }
 
-    return &node, address, nil
-}
-
-func (this *Node) Run() error {
     // Connects to peers
-    this.peers.Connect()
+    go cluster.Connect()
 
     // Dispatches heartbeat signal
     go func() {
         for {
-            go this.peers.BroadcastHeartbeat(this.roleId)
+            go cluster.BroadcastHeartbeat(roleId)
             time.Sleep(time.Second)
         }
     }()
 
     // Begins leader election
-    go proposer.Run(this.proposerEntity)
+    go proposer.Run(proposerRole)
 
-    return nil
+    return address, nil
 }
