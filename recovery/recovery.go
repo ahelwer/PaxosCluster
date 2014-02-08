@@ -110,7 +110,7 @@ func (this *Manager) UpdateMinProposalId(roleId uint64, id proposal.Id) error {
     // Ensures existence of directory, creating it if necessary
     _, err := os.Stat(fmt.Sprintf("coldstorage/%d", roleId))
     if os.IsNotExist(err) {
-        err = os.Mkdir(fmt.Sprintf("coldstorage/%d", roleId), os.ModeDir)
+        err = os.Mkdir(fmt.Sprintf("coldstorage/%d", roleId), 0700)
         if err != nil { return err }
     } else if err != nil { return err }
 
@@ -178,7 +178,7 @@ func (this *Manager) UpdateLogRecord(roleId uint64, index int, value string, id 
     // Ensures existence of directory, creating it if necessary
     _, err := os.Stat(fmt.Sprintf("coldstorage/%d", roleId))
     if os.IsNotExist(err) {
-        err = os.Mkdir(fmt.Sprintf("coldstorage/%d", roleId), os.ModeDir)
+        err = os.Mkdir(fmt.Sprintf("coldstorage/%d", roleId), 0700)
         if err != nil { return err }
     } else if err != nil { return err }
 
