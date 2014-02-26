@@ -95,12 +95,12 @@ func (this *Manager) RecoverMinProposalId(roleId uint64) (proposal.Id, error) {
     record, err := proposalFileReader.Read()
     proposalFile.Close()
     if err != nil && err != io.EOF { return proposal.Default(), err }
-    proposalRole, err := strconv.ParseUint(record[0], 10, 64)
-    if err != nil { return proposal.Default(), err }
-    sequence, err := strconv.ParseInt(record[1], 10, 64)
+    
+    // Deserializes proposal ID
+    id, err := proposal.DeserializeFromCSV(record)
     if err != nil { return proposal.Default(), err }
 
-    return proposal.Id{proposalRole, sequence}, nil
+    return id, nil
 }
 
 func (this *Manager) UpdateMinProposalId(roleId uint64, id proposal.Id) error {
@@ -121,7 +121,7 @@ func (this *Manager) UpdateMinProposalId(roleId uint64, id proposal.Id) error {
     defer proposalFile.Close()
 
     // Writes data to file
-    record := []string{strconv.FormatUint(id.RoleId, 10), strconv.FormatInt(id.Sequence, 10)}
+    record := proposal.SerializeToCSV(id)
     proposalFileWriter := csv.NewWriter(proposalFile)
     err = proposalFileWriter.Write(record)
     if err != nil { return err }
@@ -158,13 +158,11 @@ func (this *Manager) RecoverLog(roleId uint64) ([]string, []proposal.Id, error) 
     var values []string = nil
     var proposals []proposal.Id = nil
     for _, record := range records {
-        if len(record) != 3 { return nil, nil, fmt.Errorf("Invalid record length in log file %d", roleId) }
+        if len(record) < 2 { return nil, nil, fmt.Errorf("Invalid record length in log file %d", roleId) }
         values = append(values, record[0])
-        proposalRole, err := strconv.ParseUint(record[1], 10, 64)
+        id, err := proposal.DeserializeFromCSV(record[1:])
         if err != nil { return nil, nil, err }
-        sequence, err := strconv.ParseInt(record[2], 10, 64)
-        if err != nil { return nil, nil, err }
-        proposals = append(proposals, proposal.Id{proposalRole, sequence})
+        proposals = append(proposals, id)
     }
 
     return values, proposals, nil
@@ -196,8 +194,8 @@ func (this *Manager) UpdateLogRecord(roleId uint64, index int, value string, id 
     } else if err != nil && !os.IsNotExist(err) { return err }
 
     // Modifies record
-    blank := []string{"", "0", "0"}
-    record := []string{value, strconv.FormatUint(id.RoleId, 10), strconv.FormatInt(id.Sequence, 10)}
+    blank := append([]string{""}, proposal.SerializeToCSV(proposal.Default())...)
+    record := append([]string{value}, proposal.SerializeToCSV(id)...)
     for recordCount := len(records); recordCount <= index; recordCount++ {
         records = append(records, blank)
     }

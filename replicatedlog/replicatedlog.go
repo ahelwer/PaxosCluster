@@ -82,7 +82,7 @@ func (this *Log) updateFirstUnchosenIndex() {
     limit := len(this.acceptedProposals)
 
     for idx := this.firstUnchosenIndex; idx < limit; idx++ {
-        if this.acceptedProposals[idx] != proposal.Chosen() {
+        if !this.acceptedProposals[idx].IsChosen() {
             this.firstUnchosenIndex = idx
             return
         } else {
@@ -112,7 +112,7 @@ func (this *Log) NoMoreAcceptedPast(index int) bool {
 }
 
 // Marks all log entries with the given proposalId as chosen, up to the given index
-func (this *Log) MarkAsAccepted(proposalId proposal.Id, upto int) {
+func (this *Log) MarkAsChosen(proposalId proposal.Id, upto int) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
@@ -161,7 +161,7 @@ func (this *Log) SetEntryAt(index int, value string, proposalId proposal.Id) {
         this.acceptedProposals = append(this.acceptedProposals, make([]proposal.Id, proposalsDiff)...)
     } 
 
-    if this.acceptedProposals[index] != proposal.Chosen() &&
+    if !this.acceptedProposals[index].IsChosen() &&
         (proposalId.IsGreaterThan(this.minProposalId) ||
         proposalId == this.minProposalId) {
         this.values[index] = value 
@@ -175,7 +175,7 @@ func (this *Log) SetEntryAt(index int, value string, proposalId proposal.Id) {
     }
 
     // Updates firstUnchosenIndex if value is being chosen there
-    if proposalId == proposal.Chosen() && this.firstUnchosenIndex == index {
+    if proposalId.IsChosen() && this.firstUnchosenIndex == index {
         this.updateFirstUnchosenIndex()
     }
 }

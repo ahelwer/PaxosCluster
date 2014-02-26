@@ -67,7 +67,7 @@ type ProposalResp struct {
 func (this *AcceptorRole) Accept(proposal *ProposalReq, reply *ProposalResp) error {
     fmt.Println("[ ACCEPTOR", this.roleId, "] Proposal: considering proposal", proposal.ProposalId,
                 "of", proposal.Value, "for index", proposal.Index)
-    this.log.MarkAsAccepted(proposal.ProposalId, proposal.FirstUnchosenIndex)
+    this.log.MarkAsChosen(proposal.ProposalId, proposal.FirstUnchosenIndex)
     minProposalId := this.log.GetMinProposalId()
     if proposal.ProposalId.IsGreaterThan(minProposalId) || proposal.ProposalId == minProposalId {
         this.log.SetEntryAt(proposal.Index, proposal.Value, proposal.ProposalId)

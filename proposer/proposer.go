@@ -5,6 +5,7 @@ import (
     "time"
     "github/paxoscluster/acceptor"
     "github/paxoscluster/proposal"
+    "github/paxoscluster/proposal/manager"
     "github/paxoscluster/clusterpeers"
     "github/paxoscluster/replicatedlog"
 )
@@ -13,7 +14,7 @@ type ProposerRole struct {
     roleId uint64
     log *replicatedlog.Log
     peers *clusterpeers.Cluster
-    proposals *proposal.Manager
+    proposals *manager.ProposalManager
     client chan ClientRequest
     heartbeat chan uint64
     terminator chan bool
@@ -25,7 +26,7 @@ func Construct(roleId uint64, log *replicatedlog.Log, peers *clusterpeers.Cluste
         roleId: roleId,
         log: log,
         peers: peers,
-        proposals: proposal.ConstructManager(roleId),    
+        proposals: manager.ConstructProposalManager(roleId),    
         client: make(chan ClientRequest),
         heartbeat: make(chan uint64),
         terminator: make(chan bool),
