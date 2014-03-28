@@ -21,12 +21,12 @@ type ProposerRole struct {
 }
 
 // Constructor for ProposerRole
-func Construct(roleId uint64, log *replicatedlog.Log, peers *clusterpeers.Cluster) *ProposerRole {
+func Construct(roleId uint64, proposals *manager.ProposalManager, log *replicatedlog.Log, peers *clusterpeers.Cluster) *ProposerRole {
     newProposerRole := ProposerRole {
         roleId: roleId,
         log: log,
         peers: peers,
-        proposals: manager.ConstructProposalManager(roleId),    
+        proposals: proposals,    
         client: make(chan ClientRequest),
         heartbeat: make(chan uint64),
         terminator: make(chan bool),

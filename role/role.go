@@ -8,6 +8,7 @@ import (
     "github/paxoscluster/replicatedlog"
     "github/paxoscluster/clusterpeers"
     "github/paxoscluster/recovery"
+    "github/paxoscluster/proposal/manager"
 )
 
 // Initialize proposer and acceptor roles
@@ -16,9 +17,11 @@ func LaunchNode(assignedId uint64, disk *recovery.Manager) (string, error) {
     if err != nil { return address, err }
     log, err := replicatedlog.ConstructLog(roleId, disk)
     if err != nil { return address, err }
+    proposals, err := manager.ConstructProposalManager(roleId, disk)
+    if err != nil { return address, err }
 
     acceptorRole := acceptor.Construct(roleId, log)
-    proposerRole := proposer.Construct(roleId, log, cluster)
+    proposerRole := proposer.Construct(roleId, proposals, log, cluster)
 
     handler := rpc.NewServer()
     err = handler.Register(acceptorRole)

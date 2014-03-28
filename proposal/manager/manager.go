@@ -54,19 +54,20 @@ func (this *ProposalManager) GenerateNextProposalId() (proposal.Id, error) {
 }
 
 // Generates & returns a new proposal ID which will outrank the given proposal ID
-func (this *ProposalManager) GenerateProposalIdToBeat(hint proposal.Id) proposal.Id {
+func (this *ProposalManager) GenerateProposalIdToBeat(hint proposal.Id) (proposal.Id, error) {
     this.exclude.Lock()
     defer this.exclude.Unlock()
 
-    /*
     if this.proposalCount > hint.Sequence {
         this.proposalCount++
     } else {
         this.proposalCount = hint.Sequence + 1
     }
 
-    */
     this.currentId = proposal.ConstructProposalId(this.roleId, this.proposalCount)
 
-    return this.currentId
+    err := this.disk.UpdateCurrentProposalId(this.roleId, this.currentId)
+    if err != nil { return proposal.Default(), err }
+
+    return this.currentId, err
 }
