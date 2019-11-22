@@ -28,15 +28,4 @@ You can change the ports on which the processes listen by editing the `coldstora
 
 ## Run on cluster of machines
 
-This mode of operation has `PaxosCluster` run on five separate machines, communicating over a local or virtual network. Set it up as follows:
-
-1. Provision the machines on your cloud provider of choice, ensuring they're all on the virtual network
-   - Alternatively, use five machines with separate IPv4 addresses on a local network of your own 
-2. Collect the IPv4 addresses of the machines on the local/virtual network and record them in the `coldstorage/peers.csv` file
-   - On Azure, you can find this as the "Private IP address" on the VM page
-3. Copy the built `PaxosCluster` binary to all five machines, along with the `coldstorage` directory
-   - With linux VMs, use `scp -r go/src/github/PaxosCluster username@publicIpAddress:~`
-   - Alternatively, install git & go on the machines then clone & build locally
-4. SSH into each machine with five different terminal windows, then execute `PaxosCluster`
-
-You can then enter text into whichever 
+TODO
